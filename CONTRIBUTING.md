@@ -18,7 +18,7 @@ Thank you for contributing to ThreatLens! We welcome contributions ranging from 
 ### On Windows (PowerShell)
 ```powershell
 # Clone the repository
-git clone https://github.com/threatlens/threatlens.git
+git clone https://github.com/Fantcoder/Threat-Lens.git
 cd threatlens
 
 # Install dependencies and pre-commit environment via uv
@@ -31,7 +31,7 @@ Copy-Item .env.example .env
 ### On Linux / macOS (Make)
 ```bash
 # Clone the repository
-git clone https://github.com/threatlens/threatlens.git
+git clone https://github.com/Fantcoder/Threat-Lens.git
 cd threatlens
 
 # Install dependencies

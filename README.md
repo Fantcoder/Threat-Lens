@@ -91,7 +91,7 @@ Requires Python 3.11+. The project is managed via [uv](https://docs.astral.sh/uv
 **Windows (PowerShell):**
 ```powershell
 # Clone the repository
-git clone https://github.com/threatlens/threatlens.git
+git clone https://github.com/Fantcoder/Threat-Lens.git
 cd threatlens
 
 # Install dependencies using the PowerShell task runner
@@ -101,7 +101,7 @@ cd threatlens
 **Linux / macOS:**
 ```bash
 # Clone the repository
-git clone https://github.com/threatlens/threatlens.git
+git clone https://github.com/Fantcoder/Threat-Lens.git
 cd threatlens
 
 # Install dependencies using Makefile
