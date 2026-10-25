@@ -98,7 +98,8 @@ This document tracks verification status across build phases. In accordance with
 - **Coverage**: `report.py` 98.12%, `cli.py` 85.63%. Total repo coverage: 95.72%.
 
 ### Phase 9: Containerization & Docker Compose
-- **Dockerfile**: Hardened multi-stage build created with `python:3.11-slim`, `uv` binary layer caching, standalone `/app/.venv` without dev dependencies, non-root user `threatlens` (UID 10001), healthcheck against `/health`, and non-privileged volume mount `/app/data`.
+- **Dockerfile**: Hardened multi-stage build updated with `WORKDIR /app` across both stages, `uv sync --frozen --no-dev --no-editable` to compile the package directly into site-packages, non-root user `threatlens` (UID 10001), healthcheck against `/health`, and non-privileged volume mount `/app/data`.
+- **Venv Relocation Verified**: Replicated venv relocation scenario; proved that default editable install created `.pth` pointing to build directory which failed with `ModuleNotFoundError: No module named 'threatlens'` upon build directory removal. Proved that `--no-editable` installs package into site-packages and imports successfully without `src/`.
 - **.dockerignore**: Configured to exclude `.git`, caches, test suites, `.env`, and local SQLite artifacts.
 - **docker-compose.yml**: Validated with PyYAML parser; includes persistent `./data` volume mapping, automatic restart policy, healthcheck, and optional `.env` secret injection.
 

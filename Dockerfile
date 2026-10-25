@@ -15,7 +15,7 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     PYTHONUNBUFFERED=1
 
-WORKDIR /build
+WORKDIR /app
 
 # Copy dependency manifests first for layer caching
 COPY pyproject.toml README.md ./
@@ -25,10 +25,10 @@ COPY uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
 
-# Copy source tree and install project
+# Copy source tree and install project into site-packages (non-editable)
 COPY src/ ./src/
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+    uv sync --frozen --no-dev --no-editable
 
 # ==============================================================================
 # Runtime Stage
@@ -43,9 +43,8 @@ RUN groupadd -r threatlens -g 10001 && \
 WORKDIR /app
 RUN mkdir -p /app/data && chown -R threatlens:threatlens /app
 
-# Copy isolated virtual environment and source code from builder stage
-COPY --from=builder --chown=threatlens:threatlens /build/.venv /app/.venv
-COPY --from=builder --chown=threatlens:threatlens /build/src /app/src
+# Copy isolated virtual environment containing site-packages package from builder stage
+COPY --from=builder --chown=threatlens:threatlens /app/.venv /app/.venv
 
 # Set environment paths and runtime configurations
 ENV PATH="/app/.venv/bin:$PATH" \
