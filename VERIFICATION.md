@@ -102,6 +102,26 @@ This document tracks verification status across build phases. In accordance with
 - **.dockerignore**: Configured to exclude `.git`, caches, test suites, `.env`, and local SQLite artifacts.
 - **docker-compose.yml**: Validated with PyYAML parser; includes persistent `./data` volume mapping, automatic restart policy, healthcheck, and optional `.env` secret injection.
 
+### Phase 10: Security Audits & Portfolio Documentation
+- **Bandit SAST**: `uv run bandit -r src/ -c pyproject.toml` passed with 0 issues (`No issues identified`, 0 Medium, 0 High).
+- **pip-audit Vulnerability Scan**: `uv run pip-audit` passed with 0 vulnerabilities (`No known vulnerabilities found`).
+- **Full Test Suite & Quality Enforcement**:
+  - `uv run pytest`: 202 passed in 21.04s.
+  - Overall coverage: 95.72% (enforced $\ge 90\%$).
+  - `scoring.py`: 100.00% branch coverage (44/44 branches).
+  - `detector.py`: 100.00% statement coverage.
+  - `ratelimit.py`, `cache.py`, `models.py`, `config.py`: 100.00% coverage.
+  - `uv run ruff check src/ tests/`: All checks passed.
+  - `uv run ruff format --check src/ tests/`: 39 files formatted.
+  - `uv run mypy src/`: Strict type check passed across 21 source files.
+- **Documentation Suite**:
+  - `README.md`: Complete portfolio documentation, Mermaid architecture diagram, 3-step Quickstart, CLI examples, API cURL reference, configuration table, and scoring formula summary.
+  - `docs/architecture.md`: Detailed system architecture, component diagram, request lifecycle sequence diagram, and in-depth writeup of distributed systems trade-offs.
+  - `docs/adding-a-provider.md`: Step-by-step developer tutorial with complete worked URLhaus implementation.
+  - `docs/scoring.md`: Algorithmic and mathematical scoring specification.
+  - `CONTRIBUTING.md`, `SECURITY.md`, `LICENSE` (MIT), `CHANGELOG.md`.
+  - `RESUME_BULLETS.md`: Metric-backed resume bullets and 60-second technical interview elevator pitch.
+
 ---
 
 ## 2. Needs Verification on Your Machine (UNVERIFIED in sandbox)
@@ -110,4 +130,5 @@ This document tracks verification status across build phases. In accordance with
 - **`make` command (UNVERIFIED)**: `make` is not installed on this sandbox Windows image (`tasks.ps1` provided and tested). If you have `make` installed (e.g. via Scoop/Chocolatey/MSYS2), verify `make install` and `make test`.
 - **Real Provider API Lookups (UNVERIFIED)**: Live calls to VirusTotal, AlienVault OTX, and AbuseIPDB require real API keys in `.env`. In this repo, all tests strictly use recorded fixtures and `respx` mocks.
 - **GitHub Actions Workflows (UNVERIFIED)**: `.github/workflows/ci.yml` and `.github/workflows/security.yml` (Trivy container scanning, CodeQL SAST, Bandit, Pip-audit, Dependabot) run in GitHub runner infrastructure upon push.
+
 

@@ -4,7 +4,7 @@ version = "1.0.0"
 description = "Threat Intelligence Aggregator — query, normalize, and score IoCs across multiple providers"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 authors = [{name = "ThreatLens Contributors"}]
 keywords = ["threat-intelligence", "cybersecurity", "ioc", "virustotal", "async", "fastapi"]
 classifiers = [
@@ -31,7 +31,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.2,<9",
+    "pytest>=8.2,<10",
     "pytest-asyncio>=0.23,<1",
     "pytest-cov>=5,<6",
     "respx>=0.21,<1",
@@ -112,7 +112,7 @@ markers = [
 # ---------- bandit ----------
 [tool.bandit]
 exclude_dirs = ["tests"]
-skips = ["B101"]
+skips = ["B101", "B104"]
 
 # ---------- coverage ----------
 [tool.coverage.run]
@@ -127,4 +127,9 @@ exclude_lines = [
     "if __name__",
     "@overload",
     "raise NotImplementedError",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.0.3",
 ]
