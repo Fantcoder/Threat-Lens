@@ -15,6 +15,17 @@ This document tracks verification status across build phases. In accordance with
 - **Git version**: git version 2.51.1.windows.1 (`git --version`)
 - **PyPI & Outbound HTTPS connectivity**: Confirmed reachable (HTTP 200)
 - **Repository Structure**: Initialized git repo with `.gitattributes` (LF endings), `.gitignore`, `pyproject.toml`, `README.md`, `Makefile`, `tasks.ps1`, `.env.example`.
+- **Workflow YAML syntax validation**: Passed with PyYAML (`dependabot.yml`, `ci.yml`, `security.yml`).
+
+### Phase 2: Core Models & IoC Detector
+- **Ruff check & format**: `uv run ruff check src/ tests/` (All checks passed, 0 errors)
+- **Mypy strict check**: `uv run mypy src/` (Success: no issues found in 7 source files)
+- **Test suite**: 106 tests passed in 5.62s (`uv run pytest`)
+  - 40+ concrete example tests covering public IPv4, IPv6, MD5, SHA1, SHA256, FQDNs, URLs.
+  - Strict rejection of private/loopback/reserved IPv4 & IPv6 (`127.0.0.1`, `10.0.0.1`, `192.168.1.1`, `172.16.0.1`, `169.254.169.254`, `::1`, `fc00::`, `fe80::`).
+  - Refanging engine verified on `hxxp://`, `hxxps://`, `[.]`, `(.)`, `[dot]`, `[:]`.
+  - Hypothesis property tests for IPv4 generation, MD5, SHA1, SHA256, and domain regex generation.
+- **Coverage**: 100.00% on `detector.py`, `models.py`, `config.py`, and `errors.py`.
 
 ---
 
