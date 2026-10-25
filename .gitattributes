@@ -1,0 +1,9 @@
+# Force LF line endings everywhere for cross-platform consistency
+* text=auto eol=lf
+
+# Explicitly mark binary files
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary
+*.sqlite binary
