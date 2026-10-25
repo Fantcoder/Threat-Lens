@@ -38,6 +38,16 @@ This document tracks verification status across build phases. In accordance with
   - VirusTotal v3 URL ID unpadded base64 encoding verified.
 - **Coverage**: 97.59% total across codebase. Base provider is 100%, VirusTotal 98%, OTX 97%, AbuseIPDB 90%.
 
+### Phase 4: Rate Limiter, Daily Quota, Circuit Breaker & Retries
+- **Ruff check & format**: `uv run ruff check src/ tests/` (All checks passed, 0 errors)
+- **Mypy strict check**: `uv run mypy src/` (Success: no issues found in 12 source files)
+- **Test suite**: 143 tests passed in 11.50s (`uv run pytest`)
+  - TokenBucket: acquire, lazy refill, depletion, and bounded wait time verified with `FakeClock`.
+  - DailyQuotaTracker: SQLite persistence verified across separate instances; UTC midnight rollover verified.
+  - CircuitBreaker: CLOSED -> OPEN after failure threshold; recovery timeout transition to HALF_OPEN; single failure in HALF_OPEN trips to OPEN; success in HALF_OPEN resets to CLOSED.
+  - Retries: Tenacity exponential backoff with jitter and `Retry-After` header extraction verified.
+- **Coverage**: 100.00% on `ratelimit.py` (125/125 statements). Total repo coverage: 98.07%.
+
 ---
 
 ## 2. Needs Verification on Your Machine (UNVERIFIED in sandbox)
