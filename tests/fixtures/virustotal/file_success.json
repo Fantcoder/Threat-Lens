@@ -1,0 +1,18 @@
+{
+  "data": {
+    "id": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "type": "file",
+    "attributes": {
+      "last_analysis_stats": {
+        "harmless": 65,
+        "malicious": 10,
+        "suspicious": 2,
+        "undetected": 1,
+        "timeout": 0
+      },
+      "reputation": -5,
+      "tags": ["peexe", "trojan"],
+      "last_analysis_date": 1698100000
+    }
+  }
+}

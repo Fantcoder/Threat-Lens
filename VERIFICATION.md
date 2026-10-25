@@ -27,6 +27,17 @@ This document tracks verification status across build phases. In accordance with
   - Hypothesis property tests for IPv4 generation, MD5, SHA1, SHA256, and domain regex generation.
 - **Coverage**: 100.00% on `detector.py`, `models.py`, `config.py`, and `errors.py`.
 
+### Phase 3: Providers (Base, VirusTotal, AlienVault OTX, AbuseIPDB)
+- **Ruff check & format**: `uv run ruff check src/ tests/` (All checks passed, 0 errors)
+- **Mypy strict check**: `uv run mypy src/` (Success: no issues found in 11 source files)
+- **Test suite**: 134 tests passed in 11.96s (`uv run pytest`)
+  - All tests use `respx` with recorded sample JSON fixtures.
+  - Zero live network calls made.
+  - Test matrix verified for all 3 providers: 200 (ok), 404 (not_found), 429 (rate_limited), 5xx (error), timeout (error), network error (error), malformed JSON (error), missing API key (skipped), unsupported type (unsupported).
+  - AbuseIPDB strictly rejects non-IP types without making network calls.
+  - VirusTotal v3 URL ID unpadded base64 encoding verified.
+- **Coverage**: 97.59% total across codebase. Base provider is 100%, VirusTotal 98%, OTX 97%, AbuseIPDB 90%.
+
 ---
 
 ## 2. Needs Verification on Your Machine (UNVERIFIED in sandbox)

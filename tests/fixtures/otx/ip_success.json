@@ -1,0 +1,29 @@
+{
+  "indicator": "8.8.8.8",
+  "type": "IPv4",
+  "type_title": "IPv4",
+  "country_name": "United States",
+  "country_code": "US",
+  "asn": "AS15169",
+  "pulse_info": {
+    "count": 5,
+    "pulses": [
+      {
+        "id": "pulse_1",
+        "name": "DNS Hijack Activity",
+        "tags": ["dns", "malware", "c2"],
+        "adversary": "APT28",
+        "malware_families": [
+          {"name": "Sofacy", "display_name": "Sofacy"}
+        ]
+      },
+      {
+        "id": "pulse_2",
+        "name": "Suspicious Resolver",
+        "tags": ["recon", "scanner"],
+        "adversary": null,
+        "malware_families": []
+      }
+    ]
+  }
+}

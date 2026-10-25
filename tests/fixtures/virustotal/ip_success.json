@@ -1,0 +1,25 @@
+{
+  "data": {
+    "id": "8.8.8.8",
+    "type": "ip_address",
+    "links": {
+      "self": "https://www.virustotal.com/api/v3/ip_addresses/8.8.8.8"
+    },
+    "attributes": {
+      "last_analysis_stats": {
+        "harmless": 68,
+        "malicious": 3,
+        "suspicious": 1,
+        "undetected": 2,
+        "timeout": 0
+      },
+      "reputation": 15,
+      "country": "US",
+      "as_owner": "GOOGLE",
+      "asn": 15169,
+      "tags": ["dns", "google"],
+      "last_analysis_date": 1698000000,
+      "first_submission_date": 1300000000
+    }
+  }
+}

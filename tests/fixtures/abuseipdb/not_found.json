@@ -1,0 +1,8 @@
+{
+  "errors": [
+    {
+      "detail": "The IP address was not found in our database.",
+      "status": 404
+    }
+  ]
+}

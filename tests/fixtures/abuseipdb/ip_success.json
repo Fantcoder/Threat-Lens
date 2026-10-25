@@ -1,0 +1,17 @@
+{
+  "data": {
+    "ipAddress": "1.2.3.4",
+    "isPublic": true,
+    "ipVersion": 4,
+    "isWhitelisted": false,
+    "abuseConfidenceScore": 85,
+    "countryCode": "RU",
+    "usageType": "Data Center/Web Hosting/Transit",
+    "isp": "BadHost Networks",
+    "domain": "badhost.net",
+    "totalReports": 42,
+    "numDistinctUsers": 12,
+    "lastReportedAt": "2026-10-24T12:00:00+00:00",
+    "isTor": false
+  }
+}

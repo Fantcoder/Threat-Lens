@@ -69,7 +69,6 @@ select = [
     "S",              # flake8-bandit
     "T20",            # flake8-print
     "SIM",            # flake8-simplify
-    "TCH",            # flake8-type-checking
     "RUF",            # ruff-specific
 ]
 ignore = [

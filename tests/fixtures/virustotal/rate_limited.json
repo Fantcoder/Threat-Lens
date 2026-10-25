@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "QuotaExceededError",
+    "message": "User limit reached. Please wait and retry."
+  }
+}
