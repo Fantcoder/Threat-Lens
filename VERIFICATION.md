@@ -68,6 +68,18 @@ This document tracks verification status across build phases. In accordance with
   - Resilience integration: Quota exhaustion, circuit breaker open state, and provider exception isolation tested.
 - **Coverage**: `cache.py` 100.00%, `aggregator.py` 91.49%. Total repo coverage: 97.77%.
 
+### Phase 7: FastAPI REST Service & Structured Logging
+- **Ruff check & format**: `uv run ruff check src/ tests/` (All checks passed, 0 errors, 35 files clean)
+- **Mypy strict check**: `uv run mypy src/` (Success: no issues found in 19 source files)
+- **Test suite**: 185 tests passed in 18.38s (`uv run pytest`)
+  - Endpoints: `/health` (liveness), `/ready` (dependency readiness), `/api/v1/lookup` (single IoC query), `/api/v1/lookup/batch` (bounded concurrency semaphore), `/api/v1/history` (audit logs), `/api/v1/providers` (telemetry, quota, circuit states).
+  - RFC 7807 Problem Details: Standardized error envelopes across 400 (Invalid IoC), 401 (Unauthorized), 404 (Not Found), 429 (Rate Limit Exceeded), and 500 (Internal Server Error).
+  - Middleware: Correlated request IDs (`X-Request-ID`), structured JSON log emission with latency tracking.
+  - Security: Timing-safe API Key authentication (`hmac.compare_digest`) via `X-API-Key`.
+  - In-memory token-bucket client rate limiting with 429 response.
+  - Secret Redaction: Automated `SecretRedactionFilter` guarantees raw API keys never leak into logs.
+- **Coverage**: `api/routes.py` 96.67%, `api/app.py` 91.43%, `schemas.py` 100.00%, `logging.py` 86.96%. Total repo coverage: 96.78%.
+
 ---
 
 ## 2. Needs Verification on Your Machine (UNVERIFIED in sandbox)
