@@ -11,7 +11,7 @@ Pure, deterministic functions computing explainable threat scores and verdicts.
 from __future__ import annotations
 
 import math
-from typing import Mapping
+from collections.abc import Mapping
 
 from threatlens.config import Settings
 from threatlens.models import ProviderResult, ScoreComponent, Verdict
@@ -130,7 +130,9 @@ def compute_abuseipdb_subscore(result: ProviderResult) -> tuple[float, str]:
         subscore = raw_confidence
 
     subscore = min(100.0, max(0.0, subscore))
-    reason = f"{int(raw_confidence)}% confidence across {reports} report{'s' if reports != 1 else ''}"
+    reason = (
+        f"{int(raw_confidence)}% confidence across {reports} report{'s' if reports != 1 else ''}"
+    )
     if damped:
         reason += " (low-report volume damping applied)"
 
@@ -193,9 +195,7 @@ def score_report(
 
     # Compute total applicable weight for score_confidence
     applicable_weight = sum(
-        weights_map.get(r.provider, 0.0)
-        for r in provider_results
-        if r.status != "unsupported"
+        weights_map.get(r.provider, 0.0) for r in provider_results if r.status != "unsupported"
     )
     if applicable_weight > 0.0:
         score_confidence = min(1.0, total_ok_weight / applicable_weight)
@@ -222,7 +222,7 @@ def score_report(
             )
         )
 
-    final_score = int(round(total_weighted_score))
+    final_score = round(total_weighted_score)
     final_score = max(0, min(100, final_score))
 
     # Map to verdict thresholds

@@ -32,9 +32,7 @@ def test_virustotal_subscore_zero_engines() -> None:
 
 
 def test_virustotal_subscore_clean() -> None:
-    res = ProviderResult(
-        provider="virustotal", status="ok", malicious_votes=0, total_engines=70
-    )
+    res = ProviderResult(provider="virustotal", status="ok", malicious_votes=0, total_engines=70)
     score, reason = compute_virustotal_subscore(res)
     assert score == 0.0
     assert "0/70 engines detected threats" in reason
@@ -42,9 +40,7 @@ def test_virustotal_subscore_clean() -> None:
 
 def test_virustotal_subscore_low_detection_no_tags() -> None:
     # 2 / 70 = 0.0285 (< 0.25)
-    res = ProviderResult(
-        provider="virustotal", status="ok", malicious_votes=2, total_engines=70
-    )
+    res = ProviderResult(provider="virustotal", status="ok", malicious_votes=2, total_engines=70)
     score, reason = compute_virustotal_subscore(res)
     assert 20.0 <= score < 90.0
     assert "malware tag bonus" not in reason
@@ -72,7 +68,7 @@ def test_virustotal_subscore_high_detection_capped() -> None:
         total_engines=70,
         tags=["ransomware"],
     )
-    score, reason = compute_virustotal_subscore(res)
+    score, _reason = compute_virustotal_subscore(res)
     assert score >= 90.0
     assert score <= 100.0
 
@@ -143,9 +139,7 @@ def test_otx_subscore_with_malware_only() -> None:
 
 
 def test_abuseipdb_subscore_zero_reports() -> None:
-    res = ProviderResult(
-        provider="abuseipdb", status="ok", abuse_confidence=0, total_reports=0
-    )
+    res = ProviderResult(provider="abuseipdb", status="ok", abuse_confidence=0, total_reports=0)
     score, reason = compute_abuseipdb_subscore(res)
     assert score == 0.0
     assert "0% abuse confidence" in reason
@@ -153,9 +147,7 @@ def test_abuseipdb_subscore_zero_reports() -> None:
 
 def test_abuseipdb_subscore_low_reports_damped() -> None:
     # 1 report (< 3) -> 50% damping
-    res = ProviderResult(
-        provider="abuseipdb", status="ok", abuse_confidence=80, total_reports=1
-    )
+    res = ProviderResult(provider="abuseipdb", status="ok", abuse_confidence=80, total_reports=1)
     score, reason = compute_abuseipdb_subscore(res)
     assert score == 40.0
     assert "low-report volume damping applied" in reason
@@ -164,9 +156,7 @@ def test_abuseipdb_subscore_low_reports_damped() -> None:
 
 def test_abuseipdb_subscore_high_reports() -> None:
     # 10 reports (>= 3) -> no damping
-    res = ProviderResult(
-        provider="abuseipdb", status="ok", abuse_confidence=85, total_reports=10
-    )
+    res = ProviderResult(provider="abuseipdb", status="ok", abuse_confidence=85, total_reports=10)
     score, reason = compute_abuseipdb_subscore(res)
     assert score == 85.0
     assert "damping" not in reason
@@ -221,9 +211,7 @@ def test_score_report_suspicious_verdict(default_settings: Settings) -> None:
     verdict, score, _, _ = score_report(results, default_settings)
     assert verdict == Verdict.SUSPICIOUS
     assert (
-        default_settings.threshold_low_risk_max
-        < score
-        <= default_settings.threshold_suspicious_max
+        default_settings.threshold_low_risk_max < score <= default_settings.threshold_suspicious_max
     )
 
 
@@ -236,12 +224,8 @@ def test_score_report_malicious_verdict(default_settings: Settings) -> None:
             total_engines=70,
             tags=["trojan"],
         ),
-        ProviderResult(
-            provider="otx", status="ok", pulse_count=15, threat_actors=["APT28"]
-        ),
-        ProviderResult(
-            provider="abuseipdb", status="ok", abuse_confidence=95, total_reports=30
-        ),
+        ProviderResult(provider="otx", status="ok", pulse_count=15, threat_actors=["APT28"]),
+        ProviderResult(provider="abuseipdb", status="ok", abuse_confidence=95, total_reports=30),
     ]
     verdict, score, conf, breakdown = score_report(results, default_settings)
     assert verdict == Verdict.MALICIOUS
@@ -256,7 +240,7 @@ def test_score_report_partial_failure_renormalization(default_settings: Settings
         ProviderResult(provider="virustotal", status="rate_limited"),
         ProviderResult(provider="otx", status="ok", pulse_count=5),
     ]
-    verdict, score, conf, breakdown = score_report(results, default_settings)
+    _verdict, _score, conf, breakdown = score_report(results, default_settings)
     # VT weight is 0.50, OTX is 0.25 -> total applicable is 0.75
     # ok weight is 0.25 -> confidence = 0.25 / 0.75 = 0.33
     assert conf == 0.33
@@ -275,7 +259,7 @@ def test_score_report_zero_weight_fallback(default_settings: Settings) -> None:
     results = [
         ProviderResult(provider="virustotal", status="ok", malicious_votes=10, total_engines=70),
     ]
-    verdict, score, conf, breakdown = score_report(results, settings)
+    _verdict, _score, conf, breakdown = score_report(results, settings)
     assert conf == 1.0
     assert breakdown[0].weight == 1.0
 
@@ -284,7 +268,7 @@ def test_score_report_unknown_provider(default_settings: Settings) -> None:
     results = [
         ProviderResult(provider="custom_unregistered", status="ok"),
     ]
-    verdict, score, conf, breakdown = score_report(results, default_settings)
+    verdict, score, _conf, breakdown = score_report(results, default_settings)
     assert verdict == Verdict.CLEAN
     assert score == 0
     assert "Unknown provider custom_unregistered" in breakdown[0].reason

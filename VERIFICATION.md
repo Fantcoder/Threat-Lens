@@ -59,6 +59,15 @@ This document tracks verification status across build phases. In accordance with
 - **Coverage**: 100.00% branch coverage on `scoring.py` (99/99 statements, 44/44 branches, 0 missed). Total repo coverage: 98.34%.
 - **Documentation**: Detailed algorithmic specification written to `docs/scoring.md`.
 
+### Phase 6: Aggregator, Cache & Request Coalescing
+- **Ruff check & format**: `uv run ruff check src/ tests/` (All checks passed, 0 errors)
+- **Mypy strict check**: `uv run mypy src/` (Success: no issues found in 15 source files)
+- **Test suite**: 176 tests passed in 14.32s (`uv run pytest`)
+  - Cache: SQLite table creation, indexing, TTL remaining calculation, put/get, audit history logging, and safe cleanup of expired entries verified.
+  - Request Coalescing: Proven that concurrent lookups for identical IoCs share one in-flight upstream execution via `asyncio.Future`.
+  - Resilience integration: Quota exhaustion, circuit breaker open state, and provider exception isolation tested.
+- **Coverage**: `cache.py` 100.00%, `aggregator.py` 91.49%. Total repo coverage: 97.77%.
+
 ---
 
 ## 2. Needs Verification on Your Machine (UNVERIFIED in sandbox)
