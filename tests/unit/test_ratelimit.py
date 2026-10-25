@@ -106,6 +106,16 @@ async def test_daily_quota_tracker_workflow(tmp_path: Path) -> None:
     assert used == 3
     assert limit == 3
 
+    # Test refund method (3 used -> 1 refund -> 2 used)
+    await tracker.refund("virustotal")
+    used_after_refund, _ = await tracker.get_usage("virustotal", limit=3)
+    assert used_after_refund == 2
+
+    # Now an increment is allowed again since count is 2 < 3
+    assert await tracker.check_and_increment("virustotal", limit=3) is True
+    used_after_reinc, _ = await tracker.get_usage("virustotal", limit=3)
+    assert used_after_reinc == 3
+
     # Midnight rollover: advance time to next day
     current_dt = datetime(2026, 10, 25, 0, 1, 0, tzinfo=UTC)
     # New day resets quota

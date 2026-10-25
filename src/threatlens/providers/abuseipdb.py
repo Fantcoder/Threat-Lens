@@ -31,6 +31,10 @@ class AbuseIPDBProvider(BaseProvider):
         self.rate_limit_daily = daily
         self.timeout_seconds = timeout
 
+    def is_configured(self) -> bool:
+        """Return True if AbuseIPDB API key is present."""
+        return bool(self.api_key)
+
     async def lookup(
         self,
         ioc: str,

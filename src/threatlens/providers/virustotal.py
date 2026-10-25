@@ -42,6 +42,10 @@ class VirusTotalProvider(BaseProvider):
         self.rate_limit_daily = daily
         self.timeout_seconds = timeout
 
+    def is_configured(self) -> bool:
+        """Return True if VirusTotal API key is present."""
+        return bool(self.api_key)
+
     @staticmethod
     def encode_url_id(url: str) -> str:
         """Encode URL as URL-safe base64 without padding for VirusTotal v3."""

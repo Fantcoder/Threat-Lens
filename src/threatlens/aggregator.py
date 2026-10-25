@@ -241,7 +241,7 @@ class Aggregator:
         """Query a single provider guarded by quotas, token bucket, and circuit breaker."""
         start_time = time.perf_counter()
 
-        # Check type support
+        # 1. Check type support
         if not provider.supports(ioc_type):
             return ProviderResult(
                 provider=provider.name,
@@ -249,7 +249,24 @@ class Aggregator:
                 error_message=f"{provider.name} does not support {ioc_type.value}",
             )
 
-        # Check daily quota
+        # 2. Check configuration (keyless mode returns skipped without burning quota)
+        if not provider.is_configured():
+            return ProviderResult(
+                provider=provider.name,
+                status="skipped",
+                error_message=f"{provider.name} API key not configured",
+            )
+
+        # 3. Check circuit breaker (open breaker must not consume quota or tokens)
+        cb = self.circuit_breakers.get(provider.name)
+        if cb and not await cb.can_execute():
+            return ProviderResult(
+                provider=provider.name,
+                status="error",
+                error_message=f"Circuit breaker is OPEN for {provider.name}",
+            )
+
+        # 4. Check daily quota
         has_quota = await self.quota_tracker.check_and_increment(
             provider.name, provider.rate_limit_daily
         )
@@ -261,11 +278,12 @@ class Aggregator:
                 error_message=msg,
             )
 
-        # Check token bucket (per-minute rate limit)
+        # 5. Check token bucket (per-minute rate limit); refund quota if refused
         bucket = self.token_buckets.get(provider.name)
         if bucket:
             acquired = await bucket.acquire(1.0, max_wait=self.settings.max_rate_limit_wait)
             if not acquired:
+                await self.quota_tracker.refund(provider.name)
                 msg = (
                     f"Per-minute rate limit ({provider.rate_limit_rpm}) "
                     f"exceeded for {provider.name}"
@@ -275,15 +293,6 @@ class Aggregator:
                     status="rate_limited",
                     error_message=msg,
                 )
-
-        # Check circuit breaker
-        cb = self.circuit_breakers.get(provider.name)
-        if cb and not await cb.can_execute():
-            return ProviderResult(
-                provider=provider.name,
-                status="error",
-                error_message=f"Circuit breaker is OPEN for {provider.name}",
-            )
 
         # Execute provider call with retry policy
         retrying = create_retry_retrying(max_attempts=3, min_wait=0.1, max_wait=0.5)

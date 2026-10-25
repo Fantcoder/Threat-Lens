@@ -200,3 +200,79 @@ async def test_aggregator_provider_exception_handling(
     vt_res = next(p for p in report.providers if p.provider == "virustotal")
     assert vt_res.status == "error"
     assert "Unexpected crash" in (vt_res.error_message or "")
+
+
+@pytest.mark.asyncio
+async def test_keyless_mode_does_not_consume_quota_and_reports_skipped(tmp_path: Path) -> None:
+    from threatlens.providers.virustotal import VirusTotalProvider
+
+    cache = LookupCache(tmp_path / "cache.sqlite")
+    await cache.initialize()
+    quota = DailyQuotaTracker(tmp_path / "quota.sqlite")
+    await quota.initialize()
+    settings = Settings()
+    client = httpx.AsyncClient()
+
+    # VirusTotal with NO api key (keyless), rpm=4, daily=500
+    vt = VirusTotalProvider(api_key=None, rpm=4, daily=500)
+    agg = Aggregator(
+        providers=[vt],
+        cache=cache,
+        quota_tracker=quota,
+        settings=settings,
+        client=client,
+    )
+
+    # 6 lookups of distinct IPs (so cache does not deduplicate)
+    ips = [f"8.8.8.{i}" for i in range(1, 7)]
+    for ip in ips:
+        report = await agg.lookup(ip)
+        vt_res = next(p for p in report.providers if p.provider == "virustotal")
+        assert vt_res.status == "skipped", f"Expected skipped but got {vt_res.status}"
+
+    # Verify daily quota used is 0
+    used, _ = await quota.get_usage("virustotal", 500)
+    assert used == 0, f"Expected 0 quota used, got {used}"
+
+
+@pytest.mark.asyncio
+async def test_open_circuit_breaker_consumes_no_quota_or_tokens(tmp_path: Path) -> None:
+    cache = LookupCache(tmp_path / "cache.sqlite")
+    await cache.initialize()
+    quota = DailyQuotaTracker(tmp_path / "quota.sqlite")
+    await quota.initialize()
+    settings = Settings()
+    client = httpx.AsyncClient()
+
+    p = MockProvider("mock", result_to_return=ProviderResult(provider="mock", status="ok"))
+    p.rate_limit_rpm = 10
+    p.rate_limit_daily = 100
+    agg = Aggregator(
+        providers=[p],
+        cache=cache,
+        quota_tracker=quota,
+        settings=settings,
+        client=client,
+    )
+
+    # Trip breaker to OPEN
+    cb = agg.circuit_breakers["mock"]
+    for _ in range(5):
+        await cb.record_failure()
+    assert await cb.can_execute() is False
+
+    # Check quota before lookup
+    used_before, _ = await quota.get_usage("mock", 100)
+    tokens_before = agg.token_buckets["mock"].tokens
+
+    report = await agg.lookup("8.8.8.8")
+    mock_res = next(r for r in report.providers if r.provider == "mock")
+    assert mock_res.status == "error"
+    assert "Circuit breaker is OPEN" in (mock_res.error_message or "")
+
+    # Assert neither quota nor tokens were spent
+    used_after, _ = await quota.get_usage("mock", 100)
+    tokens_after = agg.token_buckets["mock"].tokens
+
+    assert used_after == used_before == 0, f"Quota was consumed: {used_after}"
+    assert tokens_after == tokens_before, f"Tokens were consumed: {tokens_after} vs {tokens_before}"

@@ -136,6 +136,21 @@ class DailyQuotaTracker:
             await db.commit()
             return True
 
+    async def refund(self, provider: str, date_str: str | None = None) -> None:
+        """Refund 1 request count (e.g. if token bucket refused after quota increment)."""
+        if date_str is None:
+            date_str = self._current_date()
+        async with self._lock, aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                UPDATE daily_quotas
+                SET count = MAX(0, count - 1)
+                WHERE provider = ? AND date = ?
+                """,
+                (provider, date_str),
+            )
+            await db.commit()
+
     async def get_usage(self, provider: str, limit: int) -> tuple[int, int]:
         """Return (used_today, daily_limit)."""
         date_str = self._current_date()

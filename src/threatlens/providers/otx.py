@@ -40,6 +40,10 @@ class OTXProvider(BaseProvider):
         self.rate_limit_daily = daily
         self.timeout_seconds = timeout
 
+    def is_configured(self) -> bool:
+        """Return True if AlienVault OTX API key is present."""
+        return bool(self.api_key)
+
     def _map_ioc_type(self, ioc_type: IoCType) -> str:
         """Map IoCType to AlienVault OTX indicator type."""
         if ioc_type == IoCType.IPV4:

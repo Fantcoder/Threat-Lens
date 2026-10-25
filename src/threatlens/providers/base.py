@@ -34,6 +34,10 @@ class BaseProvider(abc.ABC):
         """Check if this provider supports analyzing the given IoCType."""
         return ioc_type in self.supported_types
 
+    def is_configured(self) -> bool:
+        """Check if this provider has required credentials/configuration to perform lookups."""
+        return True
+
     @abc.abstractmethod
     async def lookup(
         self,

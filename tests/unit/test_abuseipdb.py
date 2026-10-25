@@ -147,6 +147,7 @@ async def test_abuseipdb_timeout_and_network_error(provider: AbuseIPDBProvider) 
 @pytest.mark.asyncio
 async def test_abuseipdb_missing_api_key() -> None:
     provider = AbuseIPDBProvider(api_key=None)
+    assert provider.is_configured() is False
     async with httpx.AsyncClient() as client:
         result = await provider.lookup("8.8.8.8", IoCType.IPV4, client)
 
