@@ -48,6 +48,17 @@ This document tracks verification status across build phases. In accordance with
   - Retries: Tenacity exponential backoff with jitter and `Retry-After` header extraction verified.
 - **Coverage**: 100.00% on `ratelimit.py` (125/125 statements). Total repo coverage: 98.07%.
 
+### Phase 5: Explainable Scoring Engine
+- **Ruff check & format**: `uv run ruff check src/ tests/` (All checks passed, 0 errors)
+- **Mypy strict check**: `uv run mypy src/` (Success: no issues found in 13 source files)
+- **Test suite**: 164 tests passed in 11.59s (`uv run pytest`)
+  - Subscore calculations for VirusTotal (nonlinear curve + malware tag bonus), OTX (log curve + threat actor/malware bonus), and AbuseIPDB (raw confidence + low report damping).
+  - Dynamic weight renormalization verified when providers fail or are skipped.
+  - Verdict threshold boundaries tested: clean (0-9), low_risk (10-34), suspicious (35-64), malicious (65-100), unknown.
+  - Explainable `score_breakdown` audit reason verified for each provider.
+- **Coverage**: 100.00% branch coverage on `scoring.py` (99/99 statements, 44/44 branches, 0 missed). Total repo coverage: 98.34%.
+- **Documentation**: Detailed algorithmic specification written to `docs/scoring.md`.
+
 ---
 
 ## 2. Needs Verification on Your Machine (UNVERIFIED in sandbox)
