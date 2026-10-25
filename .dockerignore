@@ -1,0 +1,36 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python virtual environment and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Testing and linters
+tests/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local databases and secrets
+data/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+.env
+.env.local
+
+# Documentation and assets
+docs/
+*.md
+!README.md

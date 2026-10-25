@@ -97,11 +97,17 @@ This document tracks verification status across build phases. In accordance with
     - `threatlens serve`: Development/production Uvicorn launcher.
 - **Coverage**: `report.py` 98.12%, `cli.py` 85.63%. Total repo coverage: 95.72%.
 
+### Phase 9: Containerization & Docker Compose
+- **Dockerfile**: Hardened multi-stage build created with `python:3.11-slim`, `uv` binary layer caching, standalone `/app/.venv` without dev dependencies, non-root user `threatlens` (UID 10001), healthcheck against `/health`, and non-privileged volume mount `/app/data`.
+- **.dockerignore**: Configured to exclude `.git`, caches, test suites, `.env`, and local SQLite artifacts.
+- **docker-compose.yml**: Validated with PyYAML parser; includes persistent `./data` volume mapping, automatic restart policy, healthcheck, and optional `.env` secret injection.
+
 ---
 
 ## 2. Needs Verification on Your Machine (UNVERIFIED in sandbox)
 
-- **`make` command**: `make` is not installed on this sandbox Windows image (`tasks.ps1` provided and tested). If you have `make` installed (e.g. via Scoop/Chocolatey/MSYS2), verify `make install` and `make test`.
-- **Real Provider API Lookups**: Live calls to VirusTotal, AlienVault OTX, and AbuseIPDB require real API keys. In this repo, all tests strictly use recorded fixtures and `respx` mocks.
-- **Docker Multi-Stage Build & Container Run**: Needs verification on your machine via `docker compose up --build`.
-- **GitHub Actions Workflows**: `.github/workflows/ci.yml` and `.github/workflows/security.yml` (Trivy, CodeQL, Gitleaks, Dependabot) run in GitHub runner infrastructure.
+- **Docker Multi-Stage Build & Container Run (UNVERIFIED)**: Docker Desktop daemon is stopped in this sandbox (`failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine`). Test on your machine with `docker compose up --build` or `.\tasks.ps1 docker-up`.
+- **`make` command (UNVERIFIED)**: `make` is not installed on this sandbox Windows image (`tasks.ps1` provided and tested). If you have `make` installed (e.g. via Scoop/Chocolatey/MSYS2), verify `make install` and `make test`.
+- **Real Provider API Lookups (UNVERIFIED)**: Live calls to VirusTotal, AlienVault OTX, and AbuseIPDB require real API keys in `.env`. In this repo, all tests strictly use recorded fixtures and `respx` mocks.
+- **GitHub Actions Workflows (UNVERIFIED)**: `.github/workflows/ci.yml` and `.github/workflows/security.yml` (Trivy container scanning, CodeQL SAST, Bandit, Pip-audit, Dependabot) run in GitHub runner infrastructure upon push.
+
