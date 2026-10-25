@@ -49,11 +49,11 @@ def auth_settings(tmp_path: Path) -> Settings:
 async def make_test_client(settings: Settings) -> AsyncIterator[httpx.AsyncClient]:
     """Helper context manager to guarantee FastAPI ASGI lifespan execution."""
     app = create_app(settings)
-    async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            yield client
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
+    ):
+        yield client
 
 
 # ==============================================================================

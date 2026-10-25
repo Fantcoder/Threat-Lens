@@ -16,7 +16,10 @@ from threatlens.cache import LookupCache
 from threatlens.config import Settings
 from threatlens.detector import detect_ioc
 from threatlens.models import AggregatedReport, IoCType, ProviderResult
+from threatlens.providers.abuseipdb import AbuseIPDBProvider
 from threatlens.providers.base import BaseProvider
+from threatlens.providers.otx import OTXProvider
+from threatlens.providers.virustotal import VirusTotalProvider
 from threatlens.ratelimit import (
     CircuitBreaker,
     DailyQuotaTracker,
@@ -67,6 +70,70 @@ class Aggregator:
         # In-flight lookup coalescing map: ioc_hash -> Future[AggregatedReport]
         self._inflight: dict[str, asyncio.Future[AggregatedReport]] = {}
         self._inflight_lock = asyncio.Lock()
+
+    @classmethod
+    async def create(
+        cls,
+        settings: Settings | None = None,
+        client: httpx.AsyncClient | None = None,
+    ) -> Aggregator:
+        """Factory method constructing an Aggregator with default providers and storage."""
+        active_settings = settings or Settings()
+        active_settings.cache_dir.mkdir(parents=True, exist_ok=True)
+
+        http_client = client or httpx.AsyncClient(timeout=30.0)
+        cache = LookupCache(active_settings.cache_dir / "cache.sqlite")
+        await cache.initialize()
+
+        quota_tracker = DailyQuotaTracker(active_settings.cache_dir / "quotas.sqlite")
+        await quota_tracker.initialize()
+
+        vt_key = (
+            active_settings.virustotal_api_key.get_secret_value()
+            if active_settings.virustotal_api_key
+            else None
+        )
+        otx_key = (
+            active_settings.otx_api_key.get_secret_value() if active_settings.otx_api_key else None
+        )
+        abuse_key = (
+            active_settings.abuseipdb_api_key.get_secret_value()
+            if active_settings.abuseipdb_api_key
+            else None
+        )
+
+        providers: list[BaseProvider] = [
+            VirusTotalProvider(
+                api_key=vt_key,
+                rpm=active_settings.virustotal_rpm,
+                daily=active_settings.virustotal_daily,
+                timeout=active_settings.virustotal_timeout,
+            ),
+            OTXProvider(
+                api_key=otx_key,
+                rpm=active_settings.otx_rpm,
+                daily=active_settings.otx_daily,
+                timeout=active_settings.otx_timeout,
+            ),
+            AbuseIPDBProvider(
+                api_key=abuse_key,
+                rpm=active_settings.abuseipdb_rpm,
+                daily=active_settings.abuseipdb_daily,
+                timeout=active_settings.abuseipdb_timeout,
+            ),
+        ]
+
+        return cls(
+            providers=providers,
+            cache=cache,
+            quota_tracker=quota_tracker,
+            settings=active_settings,
+            client=http_client,
+        )
+
+    async def close(self) -> None:
+        """Release underlying HTTP client resources."""
+        await self.client.aclose()
 
     async def lookup(
         self,

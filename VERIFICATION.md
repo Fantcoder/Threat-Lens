@@ -80,6 +80,23 @@ This document tracks verification status across build phases. In accordance with
   - Secret Redaction: Automated `SecretRedactionFilter` guarantees raw API keys never leak into logs.
 - **Coverage**: `api/routes.py` 96.67%, `api/app.py` 91.43%, `schemas.py` 100.00%, `logging.py` 86.96%. Total repo coverage: 96.78%.
 
+### Phase 8: Typer CLI & Multi-Format Report Generator
+- **Ruff check & format**: `uv run ruff check src/ tests/` (All checks passed, 0 errors, 39 files clean)
+- **Mypy strict check**: `uv run mypy src/` (Success: no issues found in 21 source files)
+- **Test suite**: 202 tests passed in 21.22s (`uv run pytest`)
+  - Multi-Format Reports (`src/threatlens/report.py`):
+    - `JSON`: Structured nested representation of full report or list of reports.
+    - `CSV`: Flattened 17-column format compatible with Splunk, ELK, Excel, and SIEM ingest.
+    - `Markdown`: GitHub-flavored markdown with summary badges, indicator matrix, and provider explanation breakdown.
+    - `HTML`: Self-contained, responsive cybersecurity dashboard in dark palette (`#0a0e17`), KPI stat cards, sortable table via vanilla JS, live search filter, and collapsible details drawer with zero CDN dependencies.
+    - Scalability: Batch of 50 synthetic indicators verified across all 4 formats.
+  - Typer CLI (`src/threatlens/cli.py`):
+    - `threatlens lookup <ioc>`: Pretty-printed Rich panel, colored verdict chips, breakdown table, and exit code 2 on threats (0 on clean/low risk, 1 on invalid IoC).
+    - `threatlens batch <file_or_stdin>`: Bounded concurrency, Rich progress bar, multi-format export to stdout or destination file.
+    - `threatlens providers`: Real-time telemetry table with quota usage, daily limit, and circuit breaker states (CLOSED/OPEN/HALF_OPEN).
+    - `threatlens serve`: Development/production Uvicorn launcher.
+- **Coverage**: `report.py` 98.12%, `cli.py` 85.63%. Total repo coverage: 95.72%.
+
 ---
 
 ## 2. Needs Verification on Your Machine (UNVERIFIED in sandbox)
