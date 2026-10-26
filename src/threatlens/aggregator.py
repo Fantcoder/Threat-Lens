@@ -214,7 +214,16 @@ class Aggregator:
         # Score results
         verdict, score, confidence, breakdown = score_report(provider_results, self.settings)
 
-        ttl = self.cache.get_ttl_for_verdict(verdict, self.settings)
+        # Short TTL (ttl_unknown) if any applicable provider had an error or was rate limited
+        has_partial_failure = any(
+            p.status in ("error", "rate_limited")
+            for p in provider_results
+            if p.status != "unsupported"
+        )
+        if has_partial_failure:
+            ttl = self.settings.ttl_unknown
+        else:
+            ttl = self.cache.get_ttl_for_verdict(verdict, self.settings)
 
         report = AggregatedReport(
             ioc=raw_ioc,

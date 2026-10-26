@@ -486,3 +486,123 @@ async def test_no_retry_on_404_and_401(tmp_path: Path) -> None:
         assert route_401.call_count == 1
         assert vt_401.status == "error"
         assert len(sleeps) == 0
+
+
+@pytest.mark.asyncio
+async def test_partial_failure_with_clean_subscores_returns_unknown_verdict(tmp_path: Path) -> None:
+    cache = LookupCache(tmp_path / "cache.sqlite")
+    await cache.initialize()
+    quota = DailyQuotaTracker(tmp_path / "quota.sqlite")
+    await quota.initialize()
+    settings = Settings(min_confidence_for_clean=0.6)
+    client = httpx.AsyncClient()
+
+    # VT: error (503), OTX: ok 0 pulses, AbuseIPDB: ok 0 reports
+    p_vt = MockProvider(
+        "virustotal",
+        result_to_return=ProviderResult(provider="virustotal", status="error", error_message="503"),
+    )
+    p_otx = MockProvider(
+        "otx",
+        result_to_return=ProviderResult(provider="otx", status="ok", pulse_count=0),
+    )
+    p_abuse = MockProvider(
+        "abuseipdb",
+        result_to_return=ProviderResult(
+            provider="abuseipdb", status="ok", abuse_confidence=0, total_reports=0
+        ),
+    )
+
+    agg = Aggregator(
+        providers=[p_vt, p_otx, p_abuse],
+        cache=cache,
+        quota_tracker=quota,
+        settings=settings,
+        client=client,
+    )
+
+    report = await agg.lookup("8.8.8.8")
+    assert report.score_confidence == 0.5
+    assert report.verdict == Verdict.UNKNOWN, f"Expected UNKNOWN, got {report.verdict}"
+    assert report.ttl_remaining == 900, (
+        f"Expected 900s TTL for partial result, got {report.ttl_remaining}"
+    )
+    assert any("inconclusive: provider(s) unavailable" in b.reason for b in report.score_breakdown)
+
+
+@pytest.mark.asyncio
+async def test_complete_clean_gets_24h_ttl_while_partial_gets_15m_ttl(tmp_path: Path) -> None:
+    cache = LookupCache(tmp_path / "cache.sqlite")
+    await cache.initialize()
+    quota = DailyQuotaTracker(tmp_path / "quota.sqlite")
+    await quota.initialize()
+    settings = Settings(min_confidence_for_clean=0.6)
+    client = httpx.AsyncClient()
+
+    p_vt = MockProvider(
+        "virustotal",
+        result_to_return=ProviderResult(
+            provider="virustotal", status="ok", malicious_votes=0, total_engines=70
+        ),
+    )
+    p_otx = MockProvider(
+        "otx",
+        result_to_return=ProviderResult(provider="otx", status="ok", pulse_count=0),
+    )
+    p_abuse = MockProvider(
+        "abuseipdb",
+        result_to_return=ProviderResult(
+            provider="abuseipdb", status="ok", abuse_confidence=0, total_reports=0
+        ),
+    )
+
+    agg_clean = Aggregator(
+        providers=[p_vt, p_otx, p_abuse],
+        cache=cache,
+        quota_tracker=quota,
+        settings=settings,
+        client=client,
+    )
+
+    report_complete = await agg_clean.lookup("8.8.8.8")
+    assert report_complete.verdict == Verdict.CLEAN
+    assert report_complete.ttl_remaining == 86400
+
+
+@pytest.mark.asyncio
+async def test_second_lookup_after_partial_requeries_once_short_ttl_expires(tmp_path: Path) -> None:
+    cache = LookupCache(tmp_path / "cache.sqlite")
+    await cache.initialize()
+    quota = DailyQuotaTracker(tmp_path / "quota.sqlite")
+    await quota.initialize()
+    settings = Settings(min_confidence_for_clean=0.6, ttl_unknown=1)
+    client = httpx.AsyncClient()
+
+    p_vt = MockProvider(
+        "virustotal",
+        result_to_return=ProviderResult(provider="virustotal", status="error", error_message="503"),
+    )
+    agg = Aggregator(
+        providers=[p_vt],
+        cache=cache,
+        quota_tracker=quota,
+        settings=settings,
+        client=client,
+    )
+
+    r1 = await agg.lookup("8.8.8.8")
+    assert r1.cached is False
+    assert p_vt.call_count == 1
+
+    # Immediate second lookup hits cache
+    r2 = await agg.lookup("8.8.8.8")
+    assert r2.cached is True
+    assert p_vt.call_count == 1
+
+    # Wait for short TTL (1s) to expire
+    await asyncio.sleep(1.1)
+
+    # Third lookup finds expired entry and re-queries
+    r3 = await agg.lookup("8.8.8.8")
+    assert r3.cached is False
+    assert p_vt.call_count == 2

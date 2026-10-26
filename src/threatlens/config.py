@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     threshold_suspicious_max: int = 64
     # >= 65 is malicious
 
+    # Minimum score confidence required to issue a clean or low_risk verdict
+    min_confidence_for_clean: float = 0.6
+
     # --- Cache TTL (seconds) ---
     ttl_malicious: int = 21600  # 6 hours
     ttl_suspicious: int = 21600  # 6 hours

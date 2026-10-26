@@ -235,4 +235,13 @@ def score_report(
     else:
         verdict = Verdict.MALICIOUS
 
+    # Guard against false-clean verdicts when confidence is too low due to unavailable providers
+    if score_confidence < settings.min_confidence_for_clean and verdict in (
+        Verdict.CLEAN,
+        Verdict.LOW_RISK,
+    ):
+        verdict = Verdict.UNKNOWN
+        for item in breakdown:
+            item.reason = f"{item.reason} (inconclusive: provider(s) unavailable)"
+
     return verdict, final_score, round(score_confidence, 2), breakdown
