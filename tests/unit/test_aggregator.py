@@ -276,3 +276,213 @@ async def test_open_circuit_breaker_consumes_no_quota_or_tokens(tmp_path: Path) 
 
     assert used_after == used_before == 0, f"Quota was consumed: {used_after}"
     assert tokens_after == tokens_before, f"Tokens were consumed: {tokens_after} vs {tokens_before}"
+
+
+@pytest.mark.asyncio
+async def test_retry_503_503_200_gives_3_calls_and_ok(tmp_path: Path) -> None:
+    import respx
+
+    from threatlens.providers.virustotal import VirusTotalProvider
+
+    cache = LookupCache(tmp_path / "cache.sqlite")
+    await cache.initialize()
+    quota = DailyQuotaTracker(tmp_path / "quota.sqlite")
+    await quota.initialize()
+    settings = Settings()
+    client = httpx.AsyncClient()
+
+    vt = VirusTotalProvider(api_key="valid-key")
+    sleeps: list[float] = []
+
+    async def fake_sleep(secs: float) -> None:
+        sleeps.append(secs)
+
+    agg = Aggregator(
+        providers=[vt],
+        cache=cache,
+        quota_tracker=quota,
+        settings=settings,
+        client=client,
+        sleep_fn=fake_sleep,
+    )
+
+    sample_vt_data = {
+        "data": {
+            "attributes": {
+                "last_analysis_stats": {
+                    "malicious": 0,
+                    "suspicious": 0,
+                    "harmless": 70,
+                    "undetected": 0,
+                },
+                "reputation": 0,
+                "tags": [],
+            }
+        }
+    }
+
+    with respx.mock:
+        route = respx.get("https://www.virustotal.com/api/v3/ip_addresses/1.1.1.1").mock(
+            side_effect=[
+                httpx.Response(503, text="Service Unavailable"),
+                httpx.Response(503, text="Service Unavailable"),
+                httpx.Response(200, json=sample_vt_data),
+            ]
+        )
+
+        report = await agg.lookup("1.1.1.1")
+        vt_res = next(p for p in report.providers if p.provider == "virustotal")
+
+        assert route.call_count == 3
+        assert vt_res.status == "ok"
+        assert len(sleeps) == 2
+
+
+@pytest.mark.asyncio
+async def test_retry_persistent_503_gives_3_calls_and_error(tmp_path: Path) -> None:
+    import respx
+
+    from threatlens.providers.virustotal import VirusTotalProvider
+
+    cache = LookupCache(tmp_path / "cache.sqlite")
+    await cache.initialize()
+    quota = DailyQuotaTracker(tmp_path / "quota.sqlite")
+    await quota.initialize()
+    settings = Settings()
+    client = httpx.AsyncClient()
+
+    vt = VirusTotalProvider(api_key="valid-key")
+    sleeps: list[float] = []
+
+    async def fake_sleep(secs: float) -> None:
+        sleeps.append(secs)
+
+    agg = Aggregator(
+        providers=[vt],
+        cache=cache,
+        quota_tracker=quota,
+        settings=settings,
+        client=client,
+        sleep_fn=fake_sleep,
+    )
+
+    with respx.mock:
+        route = respx.get("https://www.virustotal.com/api/v3/ip_addresses/1.1.1.1").respond(
+            status_code=503, text="Service Unavailable"
+        )
+
+        report = await agg.lookup("1.1.1.1")
+        vt_res = next(p for p in report.providers if p.provider == "virustotal")
+
+        assert route.call_count == 3
+        assert vt_res.status == "error"
+        assert len(sleeps) == 2
+
+
+@pytest.mark.asyncio
+async def test_retry_429_with_retry_after_honours_sleep(tmp_path: Path) -> None:
+    import respx
+
+    from threatlens.providers.virustotal import VirusTotalProvider
+
+    cache = LookupCache(tmp_path / "cache.sqlite")
+    await cache.initialize()
+    quota = DailyQuotaTracker(tmp_path / "quota.sqlite")
+    await quota.initialize()
+    settings = Settings()
+    client = httpx.AsyncClient()
+
+    vt = VirusTotalProvider(api_key="valid-key")
+    sleeps: list[float] = []
+
+    async def fake_sleep(secs: float) -> None:
+        sleeps.append(secs)
+
+    agg = Aggregator(
+        providers=[vt],
+        cache=cache,
+        quota_tracker=quota,
+        settings=settings,
+        client=client,
+        sleep_fn=fake_sleep,
+    )
+
+    sample_vt_data = {
+        "data": {
+            "attributes": {
+                "last_analysis_stats": {
+                    "malicious": 0,
+                    "suspicious": 0,
+                    "harmless": 70,
+                    "undetected": 0,
+                },
+                "reputation": 0,
+                "tags": [],
+            }
+        }
+    }
+
+    with respx.mock:
+        route = respx.get("https://www.virustotal.com/api/v3/ip_addresses/1.1.1.1").mock(
+            side_effect=[
+                httpx.Response(429, headers={"Retry-After": "2"}, text="Rate Limit"),
+                httpx.Response(200, json=sample_vt_data),
+            ]
+        )
+
+        report = await agg.lookup("1.1.1.1")
+        vt_res = next(p for p in report.providers if p.provider == "virustotal")
+
+        assert route.call_count == 2
+        assert vt_res.status == "ok"
+        assert len(sleeps) == 1
+        assert sleeps[0] == pytest.approx(2.0, rel=0.1)
+
+
+@pytest.mark.asyncio
+async def test_no_retry_on_404_and_401(tmp_path: Path) -> None:
+    import respx
+
+    from threatlens.providers.virustotal import VirusTotalProvider
+
+    cache = LookupCache(tmp_path / "cache.sqlite")
+    await cache.initialize()
+    quota = DailyQuotaTracker(tmp_path / "quota.sqlite")
+    await quota.initialize()
+    settings = Settings()
+    client = httpx.AsyncClient()
+
+    vt = VirusTotalProvider(api_key="valid-key")
+    sleeps: list[float] = []
+
+    async def fake_sleep(secs: float) -> None:
+        sleeps.append(secs)
+
+    agg = Aggregator(
+        providers=[vt],
+        cache=cache,
+        quota_tracker=quota,
+        settings=settings,
+        client=client,
+        sleep_fn=fake_sleep,
+    )
+
+    with respx.mock:
+        route_404 = respx.get("https://www.virustotal.com/api/v3/ip_addresses/1.1.1.1").respond(
+            status_code=404, text="Not Found"
+        )
+        report_404 = await agg.lookup("1.1.1.1")
+        vt_404 = next(p for p in report_404.providers if p.provider == "virustotal")
+        assert route_404.call_count == 1
+        assert vt_404.status == "not_found"
+        assert len(sleeps) == 0
+
+    with respx.mock:
+        route_401 = respx.get("https://www.virustotal.com/api/v3/ip_addresses/2.2.2.2").respond(
+            status_code=401, text="Unauthorized"
+        )
+        report_401 = await agg.lookup("2.2.2.2")
+        vt_401 = next(p for p in report_401.providers if p.provider == "virustotal")
+        assert route_401.call_count == 1
+        assert vt_401.status == "error"
+        assert len(sleeps) == 0

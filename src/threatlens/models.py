@@ -74,6 +74,8 @@ class ProviderResult(BaseModel):
     references: list[str] = Field(default_factory=list)
     latency_ms: int = 0
     error_message: str | None = None
+    retryable: bool = Field(default=False, exclude=True)
+    retry_after: float | None = Field(default=None, exclude=True)
     raw: dict[str, Any] | None = None
 
 

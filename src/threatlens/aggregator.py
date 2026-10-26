@@ -8,7 +8,10 @@ coalesces in-flight identical lookups, and caches normalized reports.
 from __future__ import annotations
 
 import asyncio
+import random
 import time
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 import httpx
 
@@ -24,7 +27,6 @@ from threatlens.ratelimit import (
     CircuitBreaker,
     DailyQuotaTracker,
     TokenBucket,
-    create_retry_retrying,
 )
 from threatlens.scoring import score_report
 
@@ -41,12 +43,14 @@ class Aggregator:
         client: httpx.AsyncClient,
         token_buckets: dict[str, TokenBucket] | None = None,
         circuit_breakers: dict[str, CircuitBreaker] | None = None,
+        sleep_fn: Callable[[float], Coroutine[Any, Any, None]] = asyncio.sleep,
     ) -> None:
         self.providers = providers
         self.cache = cache
         self.quota_tracker = quota_tracker
         self.settings = settings
         self.client = client
+        self.sleep_fn = sleep_fn
 
         # Token buckets (per-minute)
         self.token_buckets: dict[str, TokenBucket] = token_buckets or {
@@ -294,32 +298,45 @@ class Aggregator:
                     error_message=msg,
                 )
 
-        # Execute provider call with retry policy
-        retrying = create_retry_retrying(max_attempts=3, min_wait=0.1, max_wait=0.5)
+        # 6. Execute provider call with retry policy on retryable status codes (5xx, 429, timeouts)
+        max_attempts = 3
+        result: ProviderResult | None = None
 
-        try:
-            result: ProviderResult | None = None
-            async for attempt in retrying:
-                with attempt:
-                    result = await provider.lookup(
-                        normalized_value,
-                        ioc_type,
-                        self.client,
-                        include_raw=include_raw,
-                    )
-            assert result is not None  # Guaranteed by retry attempts
-        except Exception as exc:
-            if cb:
-                await cb.record_failure()
-            latency_ms = int((time.perf_counter() - start_time) * 1000)
-            return ProviderResult(
-                provider=provider.name,
-                status="error",
-                latency_ms=max(0, latency_ms),
-                error_message=f"Provider lookup failed: {exc}",
-            )
+        for attempt in range(1, max_attempts + 1):
+            try:
+                result = await provider.lookup(
+                    normalized_value,
+                    ioc_type,
+                    self.client,
+                    include_raw=include_raw,
+                )
+            except Exception as exc:
+                latency_ms = int((time.perf_counter() - start_time) * 1000)
+                result = ProviderResult(
+                    provider=provider.name,
+                    status="error",
+                    latency_ms=max(0, latency_ms),
+                    error_message=f"Provider lookup failed: {exc}",
+                    retryable=False,
+                )
 
-        # Update circuit breaker state based on returned ProviderResult
+            # Retry only retryable failures (5xx, 429, timeout, network error)
+            if result.retryable and attempt < max_attempts:
+                if result.retry_after is not None:
+                    backoff = min(result.retry_after, self.settings.max_rate_limit_wait)
+                else:
+                    base_delay = 0.1 * (2 ** (attempt - 1))
+                    jitter = random.uniform(0.0, 0.05)  # nosec B311
+                    backoff = min(base_delay + jitter, self.settings.max_rate_limit_wait)
+
+                await self.sleep_fn(backoff)
+                continue
+
+            break
+
+        assert result is not None
+
+        # Update circuit breaker state: record ONE failure/success per exhausted lookup
         if cb:
             if result.status in ("ok", "not_found", "skipped", "unsupported"):
                 await cb.record_success()

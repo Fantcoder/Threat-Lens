@@ -9,6 +9,7 @@ import httpx
 
 from threatlens.models import GeoInfo, IoCType, ProviderResult
 from threatlens.providers.base import BaseProvider
+from threatlens.ratelimit import parse_retry_after
 
 
 class OTXProvider(BaseProvider):
@@ -92,12 +93,14 @@ class OTXProvider(BaseProvider):
                 status="error",
                 start_time=start_time,
                 error_message=f"AlienVault OTX timed out after {self.timeout_seconds}s",
+                retryable=True,
             )
         except httpx.RequestError as exc:
             return self._create_result(
                 status="error",
                 start_time=start_time,
                 error_message=f"AlienVault OTX network error: {exc}",
+                retryable=True,
             )
 
         if response.status_code == 404:
@@ -106,13 +109,17 @@ class OTXProvider(BaseProvider):
                 start_time=start_time,
                 references=[gui_ref],
                 raw=response.json() if include_raw and self._is_json(response) else None,
+                retryable=False,
             )
 
         if response.status_code == 429:
+            retry_after = parse_retry_after(response)
             return self._create_result(
                 status="rate_limited",
                 start_time=start_time,
                 error_message="AlienVault OTX rate limit exceeded (HTTP 429)",
+                retryable=True,
+                retry_after=retry_after,
             )
 
         if response.status_code >= 500:
@@ -120,6 +127,7 @@ class OTXProvider(BaseProvider):
                 status="error",
                 start_time=start_time,
                 error_message=f"AlienVault OTX server error (HTTP {response.status_code})",
+                retryable=True,
             )
 
         if response.status_code != 200:
@@ -127,6 +135,7 @@ class OTXProvider(BaseProvider):
                 status="error",
                 start_time=start_time,
                 error_message=f"AlienVault OTX returned unexpected status {response.status_code}",
+                retryable=False,
             )
 
         try:
@@ -136,6 +145,7 @@ class OTXProvider(BaseProvider):
                 status="error",
                 start_time=start_time,
                 error_message="Failed to parse AlienVault OTX JSON response",
+                retryable=False,
             )
 
         return self._parse_payload(payload, gui_ref, start_time, include_raw)
