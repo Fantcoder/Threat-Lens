@@ -58,7 +58,10 @@ class JSONFormatter(logging.Formatter):
         }
 
         if record.exc_info:
-            log_entry["exception"] = self.formatException(record.exc_info)
+            exc_str = self.formatException(record.exc_info)
+            log_entry["exception"] = SecretRedactionFilter._redact(exc_str)
+        elif record.exc_text:
+            log_entry["exception"] = SecretRedactionFilter._redact(record.exc_text)
 
         return json.dumps(log_entry)
 

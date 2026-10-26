@@ -15,7 +15,7 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     PYTHONUNBUFFERED=1
 
-WORKDIR /build
+WORKDIR /app
 
 # Copy dependency manifests first for layer caching
 COPY pyproject.toml README.md ./
@@ -25,15 +25,20 @@ COPY uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
 
-# Copy source tree and install project
+# Copy source tree and install project into site-packages (non-editable)
 COPY src/ ./src/
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+    uv sync --frozen --no-dev --no-editable
 
 # ==============================================================================
 # Runtime Stage
 # ==============================================================================
 FROM python:3.11-slim AS runtime
+
+# Security: Remove unused build tools (pip, setuptools, wheel) from base image system site-packages
+# to eliminate vendored vulnerabilities (CVE-2026-23949, CVE-2026-24049). ThreatLens runs
+# entirely within its isolated virtual environment in /app/.venv.
+RUN rm -rf /usr/local/lib/python3.11/site-packages/*
 
 # Security: Create non-root system user and group (UID/GID 10001)
 RUN groupadd -r threatlens -g 10001 && \
@@ -43,9 +48,8 @@ RUN groupadd -r threatlens -g 10001 && \
 WORKDIR /app
 RUN mkdir -p /app/data && chown -R threatlens:threatlens /app
 
-# Copy isolated virtual environment and source code from builder stage
-COPY --from=builder --chown=threatlens:threatlens /build/.venv /app/.venv
-COPY --from=builder --chown=threatlens:threatlens /build/src /app/src
+# Copy isolated virtual environment containing site-packages package from builder stage
+COPY --from=builder --chown=threatlens:threatlens /app/.venv /app/.venv
 
 # Set environment paths and runtime configurations
 ENV PATH="/app/.venv/bin:$PATH" \

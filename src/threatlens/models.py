@@ -59,6 +59,7 @@ class ProviderResult(BaseModel):
     provider: str
     status: ProviderStatus
     malicious_votes: int | None = None
+    suspicious_votes: int | None = None
     total_engines: int | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     reputation: int | None = None
@@ -74,6 +75,8 @@ class ProviderResult(BaseModel):
     references: list[str] = Field(default_factory=list)
     latency_ms: int = 0
     error_message: str | None = None
+    retryable: bool = Field(default=False, exclude=True)
+    retry_after: float | None = Field(default=None, exclude=True)
     raw: dict[str, Any] | None = None
 
 

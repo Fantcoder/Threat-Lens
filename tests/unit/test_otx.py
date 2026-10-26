@@ -172,6 +172,7 @@ async def test_otx_timeout_and_network_error(provider: OTXProvider) -> None:
 @pytest.mark.asyncio
 async def test_otx_missing_api_key() -> None:
     provider = OTXProvider(api_key=None)
+    assert provider.is_configured() is False
     async with httpx.AsyncClient() as client:
         result = await provider.lookup("8.8.8.8", IoCType.IPV4, client)
 

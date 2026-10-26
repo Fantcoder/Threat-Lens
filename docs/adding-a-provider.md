@@ -168,7 +168,7 @@ urlhaus_timeout: float = Field(default=10.0, ge=1.0)
 
 Update `.env.example`:
 ```bash
-THREATLENS_URLHAUS_API_KEY=
+THREATLENS_URLHAUS_API_KEY=your_urlhaus_api_key_here
 THREATLENS_URLHAUS_RPM=60
 THREATLENS_URLHAUS_DAILY=5000
 THREATLENS_URLHAUS_TIMEOUT=10.0

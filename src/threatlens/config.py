@@ -7,9 +7,9 @@ Never hardcodes secrets.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,8 +28,27 @@ class Settings(BaseSettings):
     otx_api_key: SecretStr | None = None
     abuseipdb_api_key: SecretStr | None = None
 
-    # --- Service Authentication ---
+    # --- Service Authentication & Access Control ---
     api_key: SecretStr | None = None
+    cors_origins: list[str] = Field(default_factory=list)
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: Any) -> list[str]:
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return []
+            if s.startswith("[") and s.endswith("]"):
+                import contextlib
+                import json
+
+                with contextlib.suppress(Exception):
+                    res: Any = json.loads(s)
+                    if isinstance(res, list):
+                        return [str(x) for x in res]
+            return [x.strip() for x in s.split(",") if x.strip()]
+        return v or []
 
     # --- Application & Storage ---
     cache_dir: Path = Field(default=Path("./data"))
@@ -68,6 +87,12 @@ class Settings(BaseSettings):
     threshold_low_risk_max: int = 34
     threshold_suspicious_max: int = 64
     # >= 65 is malicious
+
+    # Minimum score confidence required to issue a clean or low_risk verdict
+    min_confidence_for_clean: float = 0.6
+
+    # Strong-signal floor factor: prevents strong evidence from being diluted by neutral feeds
+    strong_signal_factor: float = 0.8
 
     # --- Cache TTL (seconds) ---
     ttl_malicious: int = 21600  # 6 hours

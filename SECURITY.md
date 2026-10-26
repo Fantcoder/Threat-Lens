@@ -17,7 +17,7 @@ Only the latest release of ThreatLens receives security patches.
 
 ## 2. Reporting a Vulnerability
 
-If you discover a security vulnerability or potential risk (e.g., SSRF bypass, timing attacks in authentication, or credential leaks in logs), please do **NOT** open a public issue on GitHub.
+If you discover a security vulnerability or potential risk (e.g., input validation bypass, timing attacks in authentication, or credential leaks in logs), please do **NOT** open a public issue on GitHub.
 
 Instead, please report vulnerabilities privately:
 - **Email**: `security@threatlens.dev` (or via GitHub Private Vulnerability Reporting on the repository).
@@ -39,9 +39,9 @@ Please include:
 
 ThreatLens is engineered with intrinsic security guardrails:
 
-1. **Private Network Protection (Anti-SSRF)**:
+1. **RFC Non-Routable Address Rejection (Input Hygiene)**:
    - The IoC detector strictly rejects queries against private, loopback, link-local, multicast, and cloud metadata ranges (RFC 1918, RFC 3927, RFC 4291, `169.254.169.254`).
-   - Prevents attackers from using the service to scan internal infrastructure.
+   - Ensures input hygiene by filtering non-public indicators before dispatching upstream queries (note: input validation is not a complete SSRF defense against DNS rebinding, IPv6-mapped IPv4, or downstream redirects).
 2. **Timing-Safe Authentication**:
    - Service API key comparisons use constant-time `hmac.compare_digest` to prevent side-channel timing attacks.
 3. **Automated Secret Redaction**:

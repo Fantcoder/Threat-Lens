@@ -45,10 +45,19 @@ class LookupCache:
         key = f"{ioc_type.value}:{ioc.strip().lower()}"
         return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
+    async def ping(self) -> bool:
+        """Verify database connectivity with a read-only query."""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("SELECT 1")
+            row = await cursor.fetchone()
+            return row is not None and row[0] == 1
+
     async def initialize(self) -> None:
         """Create database tables and performance indexes."""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("PRAGMA journal_mode=WAL")
+            await db.execute("PRAGMA busy_timeout=5000")
             await db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS lookups (

@@ -200,3 +200,463 @@ async def test_aggregator_provider_exception_handling(
     vt_res = next(p for p in report.providers if p.provider == "virustotal")
     assert vt_res.status == "error"
     assert "Unexpected crash" in (vt_res.error_message or "")
+
+
+@pytest.mark.asyncio
+async def test_keyless_mode_does_not_consume_quota_and_reports_skipped(tmp_path: Path) -> None:
+    from threatlens.providers.virustotal import VirusTotalProvider
+
+    cache = LookupCache(tmp_path / "cache.sqlite")
+    await cache.initialize()
+    quota = DailyQuotaTracker(tmp_path / "quota.sqlite")
+    await quota.initialize()
+    settings = Settings()
+    client = httpx.AsyncClient()
+
+    # VirusTotal with NO api key (keyless), rpm=4, daily=500
+    vt = VirusTotalProvider(api_key=None, rpm=4, daily=500)
+    agg = Aggregator(
+        providers=[vt],
+        cache=cache,
+        quota_tracker=quota,
+        settings=settings,
+        client=client,
+    )
+
+    # 6 lookups of distinct IPs (so cache does not deduplicate)
+    ips = [f"8.8.8.{i}" for i in range(1, 7)]
+    for ip in ips:
+        report = await agg.lookup(ip)
+        vt_res = next(p for p in report.providers if p.provider == "virustotal")
+        assert vt_res.status == "skipped", f"Expected skipped but got {vt_res.status}"
+
+    # Verify daily quota used is 0
+    used, _ = await quota.get_usage("virustotal", 500)
+    assert used == 0, f"Expected 0 quota used, got {used}"
+
+
+@pytest.mark.asyncio
+async def test_open_circuit_breaker_consumes_no_quota_or_tokens(tmp_path: Path) -> None:
+    cache = LookupCache(tmp_path / "cache.sqlite")
+    await cache.initialize()
+    quota = DailyQuotaTracker(tmp_path / "quota.sqlite")
+    await quota.initialize()
+    settings = Settings()
+    client = httpx.AsyncClient()
+
+    p = MockProvider("mock", result_to_return=ProviderResult(provider="mock", status="ok"))
+    p.rate_limit_rpm = 10
+    p.rate_limit_daily = 100
+    agg = Aggregator(
+        providers=[p],
+        cache=cache,
+        quota_tracker=quota,
+        settings=settings,
+        client=client,
+    )
+
+    # Trip breaker to OPEN
+    cb = agg.circuit_breakers["mock"]
+    for _ in range(5):
+        await cb.record_failure()
+    assert await cb.can_execute() is False
+
+    # Check quota before lookup
+    used_before, _ = await quota.get_usage("mock", 100)
+    tokens_before = agg.token_buckets["mock"].tokens
+
+    report = await agg.lookup("8.8.8.8")
+    mock_res = next(r for r in report.providers if r.provider == "mock")
+    assert mock_res.status == "error"
+    assert "Circuit breaker is OPEN" in (mock_res.error_message or "")
+
+    # Assert neither quota nor tokens were spent
+    used_after, _ = await quota.get_usage("mock", 100)
+    tokens_after = agg.token_buckets["mock"].tokens
+
+    assert used_after == used_before == 0, f"Quota was consumed: {used_after}"
+    assert tokens_after == tokens_before, f"Tokens were consumed: {tokens_after} vs {tokens_before}"
+
+
+@pytest.mark.asyncio
+async def test_retry_503_503_200_gives_3_calls_and_ok(tmp_path: Path) -> None:
+    import respx
+
+    from threatlens.providers.virustotal import VirusTotalProvider
+
+    cache = LookupCache(tmp_path / "cache.sqlite")
+    await cache.initialize()
+    quota = DailyQuotaTracker(tmp_path / "quota.sqlite")
+    await quota.initialize()
+    settings = Settings()
+    client = httpx.AsyncClient()
+
+    vt = VirusTotalProvider(api_key="valid-key")
+    sleeps: list[float] = []
+
+    async def fake_sleep(secs: float) -> None:
+        sleeps.append(secs)
+
+    agg = Aggregator(
+        providers=[vt],
+        cache=cache,
+        quota_tracker=quota,
+        settings=settings,
+        client=client,
+        sleep_fn=fake_sleep,
+    )
+
+    sample_vt_data = {
+        "data": {
+            "attributes": {
+                "last_analysis_stats": {
+                    "malicious": 0,
+                    "suspicious": 0,
+                    "harmless": 70,
+                    "undetected": 0,
+                },
+                "reputation": 0,
+                "tags": [],
+            }
+        }
+    }
+
+    with respx.mock:
+        route = respx.get("https://www.virustotal.com/api/v3/ip_addresses/1.1.1.1").mock(
+            side_effect=[
+                httpx.Response(503, text="Service Unavailable"),
+                httpx.Response(503, text="Service Unavailable"),
+                httpx.Response(200, json=sample_vt_data),
+            ]
+        )
+
+        report = await agg.lookup("1.1.1.1")
+        vt_res = next(p for p in report.providers if p.provider == "virustotal")
+
+        assert route.call_count == 3
+        assert vt_res.status == "ok"
+        assert len(sleeps) == 2
+
+
+@pytest.mark.asyncio
+async def test_retry_persistent_503_gives_3_calls_and_error(tmp_path: Path) -> None:
+    import respx
+
+    from threatlens.providers.virustotal import VirusTotalProvider
+
+    cache = LookupCache(tmp_path / "cache.sqlite")
+    await cache.initialize()
+    quota = DailyQuotaTracker(tmp_path / "quota.sqlite")
+    await quota.initialize()
+    settings = Settings()
+    client = httpx.AsyncClient()
+
+    vt = VirusTotalProvider(api_key="valid-key")
+    sleeps: list[float] = []
+
+    async def fake_sleep(secs: float) -> None:
+        sleeps.append(secs)
+
+    agg = Aggregator(
+        providers=[vt],
+        cache=cache,
+        quota_tracker=quota,
+        settings=settings,
+        client=client,
+        sleep_fn=fake_sleep,
+    )
+
+    with respx.mock:
+        route = respx.get("https://www.virustotal.com/api/v3/ip_addresses/1.1.1.1").respond(
+            status_code=503, text="Service Unavailable"
+        )
+
+        report = await agg.lookup("1.1.1.1")
+        vt_res = next(p for p in report.providers if p.provider == "virustotal")
+
+        assert route.call_count == 3
+        assert vt_res.status == "error"
+        assert len(sleeps) == 2
+
+
+@pytest.mark.asyncio
+async def test_retry_429_with_retry_after_honours_sleep(tmp_path: Path) -> None:
+    import respx
+
+    from threatlens.providers.virustotal import VirusTotalProvider
+
+    cache = LookupCache(tmp_path / "cache.sqlite")
+    await cache.initialize()
+    quota = DailyQuotaTracker(tmp_path / "quota.sqlite")
+    await quota.initialize()
+    settings = Settings()
+    client = httpx.AsyncClient()
+
+    vt = VirusTotalProvider(api_key="valid-key")
+    sleeps: list[float] = []
+
+    async def fake_sleep(secs: float) -> None:
+        sleeps.append(secs)
+
+    agg = Aggregator(
+        providers=[vt],
+        cache=cache,
+        quota_tracker=quota,
+        settings=settings,
+        client=client,
+        sleep_fn=fake_sleep,
+    )
+
+    sample_vt_data = {
+        "data": {
+            "attributes": {
+                "last_analysis_stats": {
+                    "malicious": 0,
+                    "suspicious": 0,
+                    "harmless": 70,
+                    "undetected": 0,
+                },
+                "reputation": 0,
+                "tags": [],
+            }
+        }
+    }
+
+    with respx.mock:
+        route = respx.get("https://www.virustotal.com/api/v3/ip_addresses/1.1.1.1").mock(
+            side_effect=[
+                httpx.Response(429, headers={"Retry-After": "2"}, text="Rate Limit"),
+                httpx.Response(200, json=sample_vt_data),
+            ]
+        )
+
+        report = await agg.lookup("1.1.1.1")
+        vt_res = next(p for p in report.providers if p.provider == "virustotal")
+
+        assert route.call_count == 2
+        assert vt_res.status == "ok"
+        assert len(sleeps) == 1
+        assert sleeps[0] == pytest.approx(2.0, rel=0.1)
+
+
+@pytest.mark.asyncio
+async def test_no_retry_on_404_and_401(tmp_path: Path) -> None:
+    import respx
+
+    from threatlens.providers.virustotal import VirusTotalProvider
+
+    cache = LookupCache(tmp_path / "cache.sqlite")
+    await cache.initialize()
+    quota = DailyQuotaTracker(tmp_path / "quota.sqlite")
+    await quota.initialize()
+    settings = Settings()
+    client = httpx.AsyncClient()
+
+    vt = VirusTotalProvider(api_key="valid-key")
+    sleeps: list[float] = []
+
+    async def fake_sleep(secs: float) -> None:
+        sleeps.append(secs)
+
+    agg = Aggregator(
+        providers=[vt],
+        cache=cache,
+        quota_tracker=quota,
+        settings=settings,
+        client=client,
+        sleep_fn=fake_sleep,
+    )
+
+    with respx.mock:
+        route_404 = respx.get("https://www.virustotal.com/api/v3/ip_addresses/1.1.1.1").respond(
+            status_code=404, text="Not Found"
+        )
+        report_404 = await agg.lookup("1.1.1.1")
+        vt_404 = next(p for p in report_404.providers if p.provider == "virustotal")
+        assert route_404.call_count == 1
+        assert vt_404.status == "not_found"
+        assert len(sleeps) == 0
+
+    with respx.mock:
+        route_401 = respx.get("https://www.virustotal.com/api/v3/ip_addresses/2.2.2.2").respond(
+            status_code=401, text="Unauthorized"
+        )
+        report_401 = await agg.lookup("2.2.2.2")
+        vt_401 = next(p for p in report_401.providers if p.provider == "virustotal")
+        assert route_401.call_count == 1
+        assert vt_401.status == "error"
+        assert len(sleeps) == 0
+
+
+@pytest.mark.asyncio
+async def test_partial_failure_with_clean_subscores_returns_unknown_verdict(tmp_path: Path) -> None:
+    cache = LookupCache(tmp_path / "cache.sqlite")
+    await cache.initialize()
+    quota = DailyQuotaTracker(tmp_path / "quota.sqlite")
+    await quota.initialize()
+    settings = Settings(min_confidence_for_clean=0.6)
+    client = httpx.AsyncClient()
+
+    # VT: error (503), OTX: ok 0 pulses, AbuseIPDB: ok 0 reports
+    p_vt = MockProvider(
+        "virustotal",
+        result_to_return=ProviderResult(provider="virustotal", status="error", error_message="503"),
+    )
+    p_otx = MockProvider(
+        "otx",
+        result_to_return=ProviderResult(provider="otx", status="ok", pulse_count=0),
+    )
+    p_abuse = MockProvider(
+        "abuseipdb",
+        result_to_return=ProviderResult(
+            provider="abuseipdb", status="ok", abuse_confidence=0, total_reports=0
+        ),
+    )
+
+    agg = Aggregator(
+        providers=[p_vt, p_otx, p_abuse],
+        cache=cache,
+        quota_tracker=quota,
+        settings=settings,
+        client=client,
+    )
+
+    report = await agg.lookup("8.8.8.8")
+    assert report.score_confidence == 0.5
+    assert report.verdict == Verdict.UNKNOWN, f"Expected UNKNOWN, got {report.verdict}"
+    assert report.ttl_remaining == 900, (
+        f"Expected 900s TTL for partial result, got {report.ttl_remaining}"
+    )
+    assert any("inconclusive: provider(s) unavailable" in b.reason for b in report.score_breakdown)
+
+
+@pytest.mark.asyncio
+async def test_complete_clean_gets_24h_ttl_while_partial_gets_15m_ttl(tmp_path: Path) -> None:
+    cache = LookupCache(tmp_path / "cache.sqlite")
+    await cache.initialize()
+    quota = DailyQuotaTracker(tmp_path / "quota.sqlite")
+    await quota.initialize()
+    settings = Settings(min_confidence_for_clean=0.6)
+    client = httpx.AsyncClient()
+
+    p_vt = MockProvider(
+        "virustotal",
+        result_to_return=ProviderResult(
+            provider="virustotal", status="ok", malicious_votes=0, total_engines=70
+        ),
+    )
+    p_otx = MockProvider(
+        "otx",
+        result_to_return=ProviderResult(provider="otx", status="ok", pulse_count=0),
+    )
+    p_abuse = MockProvider(
+        "abuseipdb",
+        result_to_return=ProviderResult(
+            provider="abuseipdb", status="ok", abuse_confidence=0, total_reports=0
+        ),
+    )
+
+    agg_clean = Aggregator(
+        providers=[p_vt, p_otx, p_abuse],
+        cache=cache,
+        quota_tracker=quota,
+        settings=settings,
+        client=client,
+    )
+
+    report_complete = await agg_clean.lookup("8.8.8.8")
+    assert report_complete.verdict == Verdict.CLEAN
+    assert report_complete.ttl_remaining == 86400
+
+
+@pytest.mark.asyncio
+async def test_second_lookup_after_partial_requeries_once_short_ttl_expires(tmp_path: Path) -> None:
+    cache = LookupCache(tmp_path / "cache.sqlite")
+    await cache.initialize()
+    quota = DailyQuotaTracker(tmp_path / "quota.sqlite")
+    await quota.initialize()
+    settings = Settings(min_confidence_for_clean=0.6, ttl_unknown=1)
+    client = httpx.AsyncClient()
+
+    p_vt = MockProvider(
+        "virustotal",
+        result_to_return=ProviderResult(provider="virustotal", status="error", error_message="503"),
+    )
+    agg = Aggregator(
+        providers=[p_vt],
+        cache=cache,
+        quota_tracker=quota,
+        settings=settings,
+        client=client,
+    )
+
+    r1 = await agg.lookup("8.8.8.8")
+    assert r1.cached is False
+    assert p_vt.call_count == 1
+
+    # Immediate second lookup hits cache
+    r2 = await agg.lookup("8.8.8.8")
+    assert r2.cached is True
+    assert p_vt.call_count == 1
+
+    # Wait for short TTL (1s) to expire
+    await asyncio.sleep(1.1)
+
+    # Third lookup finds expired entry and re-queries
+    r3 = await agg.lookup("8.8.8.8")
+    assert r3.cached is False
+    assert p_vt.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_cache_strips_raw_and_bypasses_cache_when_include_raw_is_true(
+    tmp_path: Path,
+) -> None:
+    cache = LookupCache(tmp_path / "cache.sqlite")
+    await cache.initialize()
+    quota = DailyQuotaTracker(tmp_path / "quota.sqlite")
+    await quota.initialize()
+    settings = Settings()
+    client = httpx.AsyncClient()
+
+    p_vt = MockProvider(
+        "virustotal",
+        result_to_return=ProviderResult(
+            provider="virustotal",
+            status="ok",
+            malicious_votes=0,
+            total_engines=70,
+            raw={"raw_key": "raw_val_secret"},
+        ),
+    )
+    agg = Aggregator(
+        providers=[p_vt],
+        cache=cache,
+        quota_tracker=quota,
+        settings=settings,
+        client=client,
+    )
+
+    # 1. First lookup with include_raw=True: returned report has raw
+    r1 = await agg.lookup("8.8.8.8", include_raw=True)
+    assert r1.providers[0].raw == {"raw_key": "raw_val_secret"}
+    assert p_vt.call_count == 1
+
+    # Check that cache does NOT store raw payload
+    cached = await cache.get(cache.compute_hash("8.8.8.8", IoCType.IPV4))
+    assert cached is not None
+    assert cached.providers[0].raw is None, (
+        f"Expected raw to be stripped, got {cached.providers[0].raw}"
+    )
+
+    # 2. Second lookup with include_raw=False hits cache
+    r2 = await agg.lookup("8.8.8.8", include_raw=False)
+    assert r2.cached is True
+    assert r2.providers[0].raw is None
+    assert p_vt.call_count == 1
+
+    # 3. Third lookup with include_raw=True BYPASSES cache
+    r3 = await agg.lookup("8.8.8.8", include_raw=True)
+    assert r3.cached is False
+    assert r3.providers[0].raw == {"raw_key": "raw_val_secret"}
+    assert p_vt.call_count == 2

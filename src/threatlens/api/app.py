@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import hmac
 import logging
+import time
 import uuid
-from collections import defaultdict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -34,6 +37,45 @@ from threatlens.ratelimit import DailyQuotaTracker, TokenBucket
 logger = logging.getLogger("threatlens.api")
 
 
+class ClientRateLimiter:
+    """Bounded per-IP token bucket container with automatic idle bucket eviction."""
+
+    def __init__(
+        self,
+        capacity: int,
+        max_clients: int = 10_000,
+        idle_ttl: float = 300.0,
+    ) -> None:
+        self.capacity = capacity
+        self.max_clients = max_clients
+        self.idle_ttl = idle_ttl
+        self._buckets: dict[str, tuple[TokenBucket, float]] = {}
+        self._lock = asyncio.Lock()
+
+    async def acquire(self, client_ip: str) -> bool:
+        now = time.monotonic()
+        async with self._lock:
+            if len(self._buckets) >= self.max_clients:
+                to_del = [
+                    ip for ip, (_, last) in self._buckets.items() if now - last > self.idle_ttl
+                ]
+                for ip in to_del:
+                    del self._buckets[ip]
+                if len(self._buckets) >= self.max_clients:
+                    oldest = min(self._buckets, key=lambda k: self._buckets[k][1])
+                    del self._buckets[oldest]
+
+            if client_ip in self._buckets:
+                bucket, _ = self._buckets[client_ip]
+            else:
+                bucket = TokenBucket(
+                    capacity=self.capacity,
+                    refill_rate=self.capacity / 60.0,
+                )
+            self._buckets[client_ip] = (bucket, now)
+            return await bucket.acquire(1.0, max_wait=0.0)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Create and configure a production-ready ThreatLens FastAPI application."""
     active_settings = settings or get_settings()
@@ -59,6 +101,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cache = LookupCache(active_settings.cache_dir / "cache.sqlite")
         await cache.initialize()
         await cache.cleanup_expired()
+
+        # Start periodic background cleanup task (every 5 minutes)
+        cleanup_stop = asyncio.Event()
+
+        async def periodic_cache_cleanup() -> None:
+            while not cleanup_stop.is_set():
+                try:
+                    await asyncio.wait_for(cleanup_stop.wait(), timeout=300.0)
+                except TimeoutError:
+                    try:
+                        await cache.cleanup_expired()
+                    except Exception as exc:
+                        logger.warning("Periodic cache cleanup failed: %s", exc)
+
+        cleanup_task = asyncio.create_task(periodic_cache_cleanup())
 
         quota_tracker = DailyQuotaTracker(active_settings.cache_dir / "quotas.sqlite")
         await quota_tracker.initialize()
@@ -118,6 +175,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         # --- Shutdown Phase ---
         logger.info("Shutting down ThreatLens service resources...")
+        cleanup_stop.set()
+        cleanup_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await cleanup_task
         await http_client.aclose()
         logger.info("Shutdown complete.")
 
@@ -128,22 +189,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-    # In-memory per-client IP rate limiters
-    client_buckets: dict[str, TokenBucket] = defaultdict(
-        lambda: TokenBucket(
-            capacity=active_settings.client_rate_limit,
-            refill_rate=active_settings.client_rate_limit / 60.0,
+    # Configurable CORS (restricted to configured origins without credentials)
+    if active_settings.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=active_settings.cors_origins,
+            allow_credentials=False,
+            allow_methods=["*"],
+            allow_headers=["*"],
         )
-    )
+
+    # In-memory bounded per-client IP rate limiter
+    client_limiter = ClientRateLimiter(capacity=active_settings.client_rate_limit)
 
     # Middleware: Request ID tracking, Client Rate Limiting & API Key Auth
     @app.middleware("http")
@@ -156,10 +213,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         is_public = path in ("/health", "/ready", "/docs", "/openapi.json", "/redoc")
 
         if not is_public and path.startswith("/api/"):
-            # Client IP Rate Limiting
+            # Client IP Rate Limiting (Bounded)
             client_ip = request.client.host if request.client else "unknown"
-            bucket = client_buckets[client_ip]
-            if not await bucket.acquire(1.0, max_wait=0.0):
+            if not await client_limiter.acquire(client_ip):
                 problem = ProblemDetail(
                     title="Too Many Requests",
                     status=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -174,11 +230,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     headers={"X-Request-ID": req_id},
                 )
 
-            # Service API-Key Authentication (if configured)
+            # Service API-Key Authentication (Timing-Safe Comparison)
             if active_settings.api_key:
                 provided_key = request.headers.get("X-API-Key")
                 expected_key = active_settings.api_key.get_secret_value()
-                if not provided_key or provided_key != expected_key:
+                if not provided_key or not hmac.compare_digest(
+                    provided_key.encode("utf-8"), expected_key.encode("utf-8")
+                ):
                     problem = ProblemDetail(
                         title="Unauthorized",
                         status=status.HTTP_401_UNAUTHORIZED,

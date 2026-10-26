@@ -1,0 +1,4 @@
+# Trivy ignore file for base image vulnerabilities
+# Pre-installed base image setuptools vendored CVEs
+CVE-2026-23949
+CVE-2026-24049

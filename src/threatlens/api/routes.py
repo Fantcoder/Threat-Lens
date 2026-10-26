@@ -63,7 +63,7 @@ async def readiness(request: Request) -> dict[str, str]:
     """Readiness probe verifying persistent SQLite database connectivity."""
     try:
         aggregator: Aggregator = request.app.state.aggregator
-        await aggregator.cache.cleanup_expired()
+        await aggregator.cache.ping()
         return {"status": "ready", "database": "connected"}
     except Exception as exc:
         raise HTTPException(
@@ -100,6 +100,18 @@ async def lookup_ioc(
     """
     try:
         report = await aggregator.lookup(ioc, refresh=refresh, include_raw=include_raw)
+
+        # Return 502 if all applicable providers failed with errors or rate limits
+        has_success = any(r.status in ("ok", "not_found") for r in report.providers)
+        has_failure = any(r.status in ("error", "rate_limited") for r in report.providers)
+        if not has_success and has_failure:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=(
+                    "All applicable threat intelligence providers failed (errors or rate limits)"
+                ),
+            )
+
         return report
     except InvalidIoCError as exc:
         raise HTTPException(

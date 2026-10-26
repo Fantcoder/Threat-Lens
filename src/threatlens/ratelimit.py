@@ -92,6 +92,8 @@ class DailyQuotaTracker:
         """Create the quota tracking table if it does not already exist."""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("PRAGMA journal_mode=WAL")
+            await db.execute("PRAGMA busy_timeout=5000")
             await db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS daily_quotas (
@@ -136,6 +138,21 @@ class DailyQuotaTracker:
             await db.commit()
             return True
 
+    async def refund(self, provider: str, date_str: str | None = None) -> None:
+        """Refund 1 request count (e.g. if token bucket refused after quota increment)."""
+        if date_str is None:
+            date_str = self._current_date()
+        async with self._lock, aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                UPDATE daily_quotas
+                SET count = MAX(0, count - 1)
+                WHERE provider = ? AND date = ?
+                """,
+                (provider, date_str),
+            )
+            await db.commit()
+
     async def get_usage(self, provider: str, limit: int) -> tuple[int, int]:
         """Return (used_today, daily_limit)."""
         date_str = self._current_date()
@@ -173,30 +190,48 @@ class CircuitBreaker:
         self.state: CircuitState = CircuitState.CLOSED
         self.failure_count: int = 0
         self.last_failure_time: float = 0.0
+        self._half_open_probe_in_flight: bool = False
         self._lock = asyncio.Lock()
 
     async def can_execute(self) -> bool:
-        """Check if request execution is allowed under current circuit state."""
+        """Check if request execution is allowed under current circuit state.
+
+        In HALF_OPEN state, only ONE caller may acquire permission to probe.
+        Subsequent callers receive False until the probe completes (record_success/failure).
+        """
         async with self._lock:
             now = self.clock()
             if self.state == CircuitState.OPEN:
                 if now - self.last_failure_time > self.recovery_timeout:
                     self.state = CircuitState.HALF_OPEN
+                    self._half_open_probe_in_flight = True
+                    return True
+                return False
+            if self.state == CircuitState.HALF_OPEN:
+                if not self._half_open_probe_in_flight:
+                    self._half_open_probe_in_flight = True
                     return True
                 return False
             return True
+
+    async def release_probe(self) -> None:
+        """Release the probe gate if a probe attempt was aborted before execution."""
+        async with self._lock:
+            self._half_open_probe_in_flight = False
 
     async def record_success(self) -> None:
         """Record a successful operation."""
         async with self._lock:
             self.failure_count = 0
             self.state = CircuitState.CLOSED
+            self._half_open_probe_in_flight = False
 
     async def record_failure(self) -> None:
         """Record an operation failure and trip breaker if threshold is reached."""
         async with self._lock:
             self.failure_count += 1
             self.last_failure_time = self.clock()
+            self._half_open_probe_in_flight = False
 
             if self.state == CircuitState.HALF_OPEN or self.failure_count >= self.failure_threshold:
                 self.state = CircuitState.OPEN

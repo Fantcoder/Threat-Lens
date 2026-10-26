@@ -266,3 +266,117 @@ def test_secret_redaction_in_logs() -> None:
         assert "***REDACTED***" in output
     finally:
         logger.removeHandler(handler)
+
+
+def test_secret_redaction_in_exceptions() -> None:
+    secret_key = "sensitive_exception_token_abc_123"  # noqa: S105
+    register_secret_for_redaction(secret_key)
+
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(JSONFormatter())
+    handler.addFilter(SecretRedactionFilter())
+
+    logger = logging.getLogger("threatlens.test_exc_redaction")
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+
+    try:
+        try:
+            raise ValueError(f"Upstream auth error with secret: {secret_key}")
+        except Exception:
+            logger.exception("An unhandled error occurred during query")
+        handler.flush()
+        output = stream.getvalue()
+
+        # The raw secret MUST NEVER appear in the log output, even inside exception tracebacks
+        assert secret_key not in output, f"Raw secret leaked into log output: {output}"
+        assert "***REDACTED***" in output
+    finally:
+        logger.removeHandler(handler)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_lookup_all_providers_failed_returns_502(app_settings: Settings) -> None:
+    respx.get("https://www.virustotal.com/api/v3/ip_addresses/8.8.8.8").respond(
+        status_code=500, json={"error": {"message": "Internal Server Error"}}
+    )
+    respx.get("https://otx.alienvault.com/api/v1/indicators/IPv4/8.8.8.8/general").respond(
+        status_code=503, json={"detail": "Service Unavailable"}
+    )
+    respx.get("https://api.abuseipdb.com/api/v2/check").respond(
+        status_code=429, json={"errors": [{"detail": "Daily rate limit reached"}]}
+    )
+
+    async with make_test_client(app_settings) as client:
+        resp = await client.get("/api/v1/lookup?ioc=8.8.8.8")
+        assert resp.status_code == 502, f"Expected 502, got {resp.status_code}: {resp.text}"
+        data = resp.json()
+        assert "application/problem+json" in resp.headers["content-type"]
+        assert data["status"] == 502
+        assert "failed" in data["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_lookup_all_providers_skipped_returns_200_unknown(tmp_path: Path) -> None:
+    # All provider API keys missing (keyless mode)
+    keyless_settings = Settings(
+        cache_dir=tmp_path / "keyless",
+        virustotal_api_key=None,
+        otx_api_key=None,
+        abuseipdb_api_key=None,
+    )
+    async with make_test_client(keyless_settings) as client:
+        resp = await client.get("/api/v1/lookup?ioc=8.8.8.8")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["verdict"] == "unknown"
+        assert all(p["status"] == "skipped" for p in data["providers"])
+
+
+@pytest.mark.asyncio
+async def test_configurable_cors_origins(tmp_path: Path) -> None:
+    # 1. Configured origins
+    cors_settings = Settings(
+        cache_dir=tmp_path / "cors_configured",
+        cors_origins=["https://dashboard.example.com"],
+    )
+    async with make_test_client(cors_settings) as client:
+        resp = await client.get("/health", headers={"Origin": "https://dashboard.example.com"})
+        assert resp.status_code == 200
+        assert resp.headers.get("access-control-allow-origin") == "https://dashboard.example.com"
+        assert resp.headers.get("access-control-allow-credentials") is None  # No credentials
+
+        # Disallowed origin
+        resp_bad = await client.get("/health", headers={"Origin": "https://evil.com"})
+        assert resp_bad.headers.get("access-control-allow-origin") is None
+
+    # 2. Default origins (empty list -> no CORS headers emitted)
+    default_settings = Settings(cache_dir=tmp_path / "cors_default")
+    async with make_test_client(default_settings) as client:
+        resp_def = await client.get("/health", headers={"Origin": "https://example.com"})
+        assert resp_def.headers.get("access-control-allow-origin") is None
+
+
+@pytest.mark.asyncio
+async def test_client_rate_limiter_eviction() -> None:
+    from threatlens.api.app import ClientRateLimiter
+
+    limiter = ClientRateLimiter(capacity=10, max_clients=3, idle_ttl=0.1)
+
+    # Add 3 clients
+    assert await limiter.acquire("1.1.1.1") is True
+    assert await limiter.acquire("2.2.2.2") is True
+    assert await limiter.acquire("3.3.3.3") is True
+    assert len(limiter._buckets) == 3
+
+    # Wait for idle_ttl to expire
+    import asyncio
+
+    await asyncio.sleep(0.15)
+
+    # 4th client triggers idle eviction
+    assert await limiter.acquire("4.4.4.4") is True
+    # Idle buckets were pruned, size stays bounded
+    assert len(limiter._buckets) <= 3

@@ -5,6 +5,7 @@ All time-dependent tests use injectable clocks and sleepers (zero sleep time in 
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -106,6 +107,16 @@ async def test_daily_quota_tracker_workflow(tmp_path: Path) -> None:
     assert used == 3
     assert limit == 3
 
+    # Test refund method (3 used -> 1 refund -> 2 used)
+    await tracker.refund("virustotal")
+    used_after_refund, _ = await tracker.get_usage("virustotal", limit=3)
+    assert used_after_refund == 2
+
+    # Now an increment is allowed again since count is 2 < 3
+    assert await tracker.check_and_increment("virustotal", limit=3) is True
+    used_after_reinc, _ = await tracker.get_usage("virustotal", limit=3)
+    assert used_after_reinc == 3
+
     # Midnight rollover: advance time to next day
     current_dt = datetime(2026, 10, 25, 0, 1, 0, tzinfo=UTC)
     # New day resets quota
@@ -201,6 +212,68 @@ async def test_circuit_breaker_context_manager() -> None:
     assert breaker.failure_count == 1
 
 
+@pytest.mark.asyncio
+async def test_circuit_breaker_half_open_single_probe_gate() -> None:
+    clock = FakeClock(100.0)
+    breaker = CircuitBreaker(
+        provider="virustotal",
+        failure_threshold=2,
+        recovery_timeout=30.0,
+        clock=clock,
+    )
+    # Trip breaker to OPEN
+    await breaker.record_failure()
+    await breaker.record_failure()
+    assert breaker.state == CircuitState.OPEN
+
+    # Advance clock past timeout so it becomes eligible for HALF_OPEN
+    clock.advance(35.0)
+
+    # 10 concurrent can_execute() calls
+    results = await asyncio.gather(*(breaker.can_execute() for _ in range(10)))
+    assert results.count(True) == 1, f"Expected exactly 1 probe allowed, got {results.count(True)}"
+    assert results.count(False) == 9
+    assert breaker.state == CircuitState.HALF_OPEN
+
+    # Subsequent can_execute() while probe in flight should still be False
+    assert await breaker.can_execute() is False
+
+    # Success resets to CLOSED
+    await breaker.record_success()
+    assert breaker.state == CircuitState.CLOSED
+    assert await breaker.can_execute() is True
+
+    # Now test the failure alternate path:
+    # Trip again
+    await breaker.record_failure()
+    await breaker.record_failure()
+    assert breaker.state == CircuitState.OPEN
+    clock.advance(35.0)
+
+    # Again 10 concurrent calls
+    results2 = await asyncio.gather(*(breaker.can_execute() for _ in range(10)))
+    assert results2.count(True) == 1
+    assert results2.count(False) == 9
+
+    # Alternate path: probe fails
+    await breaker.record_failure()
+    assert breaker.state == CircuitState.OPEN
+    # Timeout reset: immediately checking can_execute should be False
+    assert await breaker.can_execute() is False
+    # Advancing only 10s should still be False
+    clock.advance(10.0)
+    assert await breaker.can_execute() is False
+    # Advancing past recovery timeout allows 1 probe again
+    clock.advance(25.0)
+    assert await breaker.can_execute() is True
+    assert breaker.state == CircuitState.HALF_OPEN
+
+    # Releasing the probe allows another probe while still in HALF_OPEN
+    assert await breaker.can_execute() is False
+    await breaker.release_probe()
+    assert await breaker.can_execute() is True
+
+
 # ==============================================================================
 # Retries & Retry-After Parsing Tests
 # ==============================================================================
@@ -236,3 +309,21 @@ async def test_retry_policy_exhaustion() -> None:
                 raise httpx.TimeoutException("Persistent connection timeout")
 
     assert attempts == 3
+
+
+@pytest.mark.asyncio
+async def test_daily_quota_wal_and_busy_timeout_pragmas(tmp_path: Path) -> None:
+    db_path = tmp_path / "quota_pragma_test.sqlite"
+    tracker = DailyQuotaTracker(db_path)
+    await tracker.initialize()
+
+    import aiosqlite
+
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute("PRAGMA journal_mode")
+        row = await cursor.fetchone()
+        assert row is not None and row[0].lower() == "wal", f"Expected WAL, got {row}"
+
+        cursor = await db.execute("PRAGMA busy_timeout")
+        row = await cursor.fetchone()
+        assert row is not None and row[0] == 5000, f"Expected 5000, got {row}"

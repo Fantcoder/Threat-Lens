@@ -8,7 +8,11 @@ coalesces in-flight identical lookups, and caches normalized reports.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import random
 import time
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 import httpx
 
@@ -24,7 +28,6 @@ from threatlens.ratelimit import (
     CircuitBreaker,
     DailyQuotaTracker,
     TokenBucket,
-    create_retry_retrying,
 )
 from threatlens.scoring import score_report
 
@@ -41,12 +44,14 @@ class Aggregator:
         client: httpx.AsyncClient,
         token_buckets: dict[str, TokenBucket] | None = None,
         circuit_breakers: dict[str, CircuitBreaker] | None = None,
+        sleep_fn: Callable[[float], Coroutine[Any, Any, None]] = asyncio.sleep,
     ) -> None:
         self.providers = providers
         self.cache = cache
         self.quota_tracker = quota_tracker
         self.settings = settings
         self.client = client
+        self.sleep_fn = sleep_fn
 
         # Token buckets (per-minute)
         self.token_buckets: dict[str, TokenBucket] = token_buckets or {
@@ -154,21 +159,22 @@ class Aggregator:
         ioc_type, normalized_value = detect_ioc(raw_ioc)
         ioc_hash = self.cache.compute_hash(normalized_value, ioc_type)
 
-        # 1. Check persistent cache unless refresh requested
-        if not refresh:
+        # 1. Check persistent cache unless refresh requested or raw payloads requested
+        if not refresh and not include_raw:
             cached_report = await self.cache.get(ioc_hash)
             if cached_report is not None:
                 return cached_report
 
-        # 2. Request coalescing: share in-flight upstream lookups for the same indicator
+        # 2. Request coalescing: share in-flight upstream lookups for identical indicator and mode
+        coalesce_key = f"{ioc_hash}:{int(include_raw)}"
         async with self._inflight_lock:
-            if ioc_hash in self._inflight:
+            if coalesce_key in self._inflight:
                 # Piggyback on in-flight request
-                return await self._inflight[ioc_hash]
+                return await self._inflight[coalesce_key]
 
             loop = asyncio.get_running_loop()
             future: asyncio.Future[AggregatedReport] = loop.create_future()
-            self._inflight[ioc_hash] = future
+            self._inflight[coalesce_key] = future
 
         try:
             report = await self._execute_fanout(raw_ioc, ioc_type, normalized_value, include_raw)
@@ -179,7 +185,11 @@ class Aggregator:
             raise
         finally:
             async with self._inflight_lock:
-                self._inflight.pop(ioc_hash, None)
+                self._inflight.pop(coalesce_key, None)
+            if future.done() and not future.cancelled():
+                # Avoid "Future exception was never retrieved" warnings if no other waiters joined
+                with contextlib.suppress(Exception):
+                    future.exception()
 
     async def _execute_fanout(
         self,
@@ -210,7 +220,16 @@ class Aggregator:
         # Score results
         verdict, score, confidence, breakdown = score_report(provider_results, self.settings)
 
-        ttl = self.cache.get_ttl_for_verdict(verdict, self.settings)
+        # Short TTL (ttl_unknown) if any applicable provider had an error or was rate limited
+        has_partial_failure = any(
+            p.status in ("error", "rate_limited")
+            for p in provider_results
+            if p.status != "unsupported"
+        )
+        if has_partial_failure:
+            ttl = self.settings.ttl_unknown
+        else:
+            ttl = self.cache.get_ttl_for_verdict(verdict, self.settings)
 
         report = AggregatedReport(
             ioc=raw_ioc,
@@ -225,9 +244,16 @@ class Aggregator:
             ttl_remaining=ttl,
         )
 
-        # Cache report and insert into audit history
-        await self.cache.put(report, ttl)
-        await self.cache.add_history(report)
+        # Strip raw payloads from provider results before caching
+        if any(p.raw is not None for p in provider_results):
+            cleaned_providers = [p.model_copy(update={"raw": None}) for p in provider_results]
+            report_to_cache = report.model_copy(update={"providers": cleaned_providers})
+        else:
+            report_to_cache = report
+
+        # Cache sanitized report and insert into audit history
+        await self.cache.put(report_to_cache, ttl)
+        await self.cache.add_history(report_to_cache)
 
         return report
 
@@ -241,7 +267,7 @@ class Aggregator:
         """Query a single provider guarded by quotas, token bucket, and circuit breaker."""
         start_time = time.perf_counter()
 
-        # Check type support
+        # 1. Check type support
         if not provider.supports(ioc_type):
             return ProviderResult(
                 provider=provider.name,
@@ -249,11 +275,30 @@ class Aggregator:
                 error_message=f"{provider.name} does not support {ioc_type.value}",
             )
 
-        # Check daily quota
+        # 2. Check configuration (keyless mode returns skipped without burning quota)
+        if not provider.is_configured():
+            return ProviderResult(
+                provider=provider.name,
+                status="skipped",
+                error_message=f"{provider.name} API key not configured",
+            )
+
+        # 3. Check circuit breaker (open breaker must not consume quota or tokens)
+        cb = self.circuit_breakers.get(provider.name)
+        if cb and not await cb.can_execute():
+            return ProviderResult(
+                provider=provider.name,
+                status="error",
+                error_message=f"Circuit breaker is OPEN for {provider.name}",
+            )
+
+        # 4. Check daily quota
         has_quota = await self.quota_tracker.check_and_increment(
             provider.name, provider.rate_limit_daily
         )
         if not has_quota:
+            if cb:
+                await cb.release_probe()
             msg = f"Daily quota ({provider.rate_limit_daily}) exhausted for {provider.name}"
             return ProviderResult(
                 provider=provider.name,
@@ -261,11 +306,14 @@ class Aggregator:
                 error_message=msg,
             )
 
-        # Check token bucket (per-minute rate limit)
+        # 5. Check token bucket (per-minute rate limit); refund quota if refused
         bucket = self.token_buckets.get(provider.name)
         if bucket:
             acquired = await bucket.acquire(1.0, max_wait=self.settings.max_rate_limit_wait)
             if not acquired:
+                if cb:
+                    await cb.release_probe()
+                await self.quota_tracker.refund(provider.name)
                 msg = (
                     f"Per-minute rate limit ({provider.rate_limit_rpm}) "
                     f"exceeded for {provider.name}"
@@ -276,41 +324,46 @@ class Aggregator:
                     error_message=msg,
                 )
 
-        # Check circuit breaker
-        cb = self.circuit_breakers.get(provider.name)
-        if cb and not await cb.can_execute():
-            return ProviderResult(
-                provider=provider.name,
-                status="error",
-                error_message=f"Circuit breaker is OPEN for {provider.name}",
-            )
+        # 6. Execute provider call with retry policy on retryable status codes (5xx, 429, timeouts)
+        max_attempts = 3
+        result: ProviderResult | None = None
 
-        # Execute provider call with retry policy
-        retrying = create_retry_retrying(max_attempts=3, min_wait=0.1, max_wait=0.5)
+        for attempt in range(1, max_attempts + 1):
+            try:
+                result = await provider.lookup(
+                    normalized_value,
+                    ioc_type,
+                    self.client,
+                    include_raw=include_raw,
+                )
+            except Exception as exc:
+                latency_ms = int((time.perf_counter() - start_time) * 1000)
+                result = ProviderResult(
+                    provider=provider.name,
+                    status="error",
+                    latency_ms=max(0, latency_ms),
+                    error_message=f"Provider lookup failed: {exc}",
+                    retryable=False,
+                )
 
-        try:
-            result: ProviderResult | None = None
-            async for attempt in retrying:
-                with attempt:
-                    result = await provider.lookup(
-                        normalized_value,
-                        ioc_type,
-                        self.client,
-                        include_raw=include_raw,
-                    )
-            assert result is not None  # Guaranteed by retry attempts
-        except Exception as exc:
-            if cb:
-                await cb.record_failure()
-            latency_ms = int((time.perf_counter() - start_time) * 1000)
-            return ProviderResult(
-                provider=provider.name,
-                status="error",
-                latency_ms=max(0, latency_ms),
-                error_message=f"Provider lookup failed: {exc}",
-            )
+            # Retry only retryable failures (5xx, 429, timeout, network error)
+            if result.retryable and attempt < max_attempts:
+                if result.retry_after is not None:
+                    backoff = min(result.retry_after, self.settings.max_rate_limit_wait)
+                else:
+                    base_delay = 0.1 * (2 ** (attempt - 1))
+                    jitter = random.uniform(0.0, 0.05)  # nosec B311
+                    backoff = min(base_delay + jitter, self.settings.max_rate_limit_wait)
 
-        # Update circuit breaker state based on returned ProviderResult
+                await self.sleep_fn(backoff)
+                continue
+
+            break
+
+        if result is None:
+            raise RuntimeError("Unreachable: aggregator result is None")
+
+        # Update circuit breaker state: record ONE failure/success per exhausted lookup
         if cb:
             if result.status in ("ok", "not_found", "skipped", "unsupported"):
                 await cb.record_success()

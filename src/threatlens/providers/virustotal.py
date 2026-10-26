@@ -11,6 +11,7 @@ import httpx
 
 from threatlens.models import GeoInfo, IoCType, ProviderResult
 from threatlens.providers.base import BaseProvider
+from threatlens.ratelimit import parse_retry_after
 
 
 class VirusTotalProvider(BaseProvider):
@@ -41,6 +42,10 @@ class VirusTotalProvider(BaseProvider):
         self.rate_limit_rpm = rpm
         self.rate_limit_daily = daily
         self.timeout_seconds = timeout
+
+    def is_configured(self) -> bool:
+        """Return True if VirusTotal API key is present."""
+        return bool(self.api_key)
 
     @staticmethod
     def encode_url_id(url: str) -> str:
@@ -93,12 +98,14 @@ class VirusTotalProvider(BaseProvider):
                 status="error",
                 start_time=start_time,
                 error_message=f"VirusTotal request timed out after {self.timeout_seconds}s",
+                retryable=True,
             )
         except httpx.RequestError as exc:
             return self._create_result(
                 status="error",
                 start_time=start_time,
                 error_message=f"VirusTotal network error: {exc}",
+                retryable=True,
             )
 
         if response.status_code == 404:
@@ -107,13 +114,17 @@ class VirusTotalProvider(BaseProvider):
                 start_time=start_time,
                 references=[gui_ref],
                 raw=response.json() if include_raw and self._is_json(response) else None,
+                retryable=False,
             )
 
         if response.status_code == 429:
+            retry_after = parse_retry_after(response)
             return self._create_result(
                 status="rate_limited",
                 start_time=start_time,
                 error_message="VirusTotal rate limit exceeded (HTTP 429)",
+                retryable=True,
+                retry_after=retry_after,
             )
 
         if response.status_code >= 500:
@@ -121,6 +132,7 @@ class VirusTotalProvider(BaseProvider):
                 status="error",
                 start_time=start_time,
                 error_message=f"VirusTotal server error (HTTP {response.status_code})",
+                retryable=True,
             )
 
         if response.status_code != 200:
@@ -128,6 +140,7 @@ class VirusTotalProvider(BaseProvider):
                 status="error",
                 start_time=start_time,
                 error_message=f"VirusTotal returned unexpected status {response.status_code}",
+                retryable=False,
             )
 
         try:
@@ -137,6 +150,7 @@ class VirusTotalProvider(BaseProvider):
                 status="error",
                 start_time=start_time,
                 error_message="Failed to parse VirusTotal JSON response",
+                retryable=False,
             )
 
         return self._parse_payload(payload, gui_ref, start_time, include_raw)
@@ -187,6 +201,7 @@ class VirusTotalProvider(BaseProvider):
             status="ok",
             start_time=start_time,
             malicious_votes=malicious,
+            suspicious_votes=suspicious,
             total_engines=total_engines,
             confidence=confidence,
             reputation=reputation,
