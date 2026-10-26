@@ -1,14 +1,13 @@
 # ThreatLens
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Test Coverage](https://img.shields.io/badge/coverage-95.7%25-brightgreen.svg)](file:///c:/Users/HP/Desktop/New%20folder%20%282%29/VERIFICATION.md)
+[![CI](https://github.com/Fantcoder/Threat-Lens/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Fantcoder/Threat-Lens/actions/workflows/ci.yml)
+[![Security Audit](https://github.com/Fantcoder/Threat-Lens/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/Fantcoder/Threat-Lens/actions/workflows/security.yml)
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Type Checked: Mypy](https://img.shields.io/badge/type_checked-mypy_strict-blue.svg)](https://mypy-lang.org/)
-[![Security: Bandit](https://img.shields.io/badge/security-bandit_passed-green.svg)](https://github.com/PyCQA/bandit)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](file:///c:/Users/HP/Desktop/New%20folder%20%282%29/LICENSE)
-[![Docker Ready](https://img.shields.io/badge/docker-multi--stage_non--root-blue.svg)](file:///c:/Users/HP/Desktop/New%20folder%20%282%29/Dockerfile)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-> **Threat Intelligence Aggregator & CLI** &mdash; Concurrently query, normalize, and score Indicators of Compromise (IoCs) across multiple threat intelligence providers with explainable scoring, multi-tier resilience, and high-performance local caching.
+> **Threat Intelligence Aggregator & CLI** &mdash; Concurrently query, normalize, and score Indicators of Compromise (IoCs) across multiple threat intelligence providers with explainable scoring, multi-tier resilience, and persistent local caching.
 
 ---
 
@@ -25,7 +24,7 @@ graph TD
     end
 
     subgraph Core ["Core Engine & Resilience"]
-        Det["IoC Detector & Refanger<br/>(Anti-SSRF RFC Rejection)"]
+        Det["IoC Detector & Refanger<br/>(RFC Non-Routable Rejection)"]
         Agg["Aggregator Orchestrator<br/>(Single-Flight Request Coalescing)"]
         Score["Explainable Scoring Engine<br/>(Dynamic Weight Renormalization)"]
         Res["Resilience Layer<br/>(TokenBucket, SQLite Daily Quotas, CircuitBreakers)"]
@@ -56,27 +55,28 @@ graph TD
 - **Multi-Type IoC Auto-Detection & Refanging**:
   - Automatically identifies IPv4, IPv6, Domains (FQDNs verified against Mozilla Public Suffix List via `tldextract`), URLs, and cryptographic hashes (MD5, SHA1, SHA256).
   - Automatically refangs defanged indicators commonly found in security tickets: `hxxp://`, `hxxps://`, `[.]`, `(.)`, `[dot]`, and `[:]`.
-  - **Built-in Anti-SSRF**: Strictly rejects loopback, RFC 1918 private subnets, link-local, and cloud metadata addresses (`169.254.169.254`).
+  - **RFC Non-Routable Address Rejection**: Strictly rejects loopback, RFC 1918 private subnets, link-local, and cloud metadata addresses (`169.254.169.254`) during indicator validation for input hygiene (note: input validation is not a complete SSRF defense against DNS rebinding, IPv6-mapped IPv4, or downstream redirects).
 - **Concurrent Provider Fan-Out**:
   - Concurrently queries **VirusTotal v3**, **AlienVault OTX**, and **AbuseIPDB** using async HTTPX.
   - Normalizes heterogeneous responses into unified, validated Pydantic models with zero uncaught provider exceptions.
 - **Explainable Scoring Engine**:
   - Transparent non-linear scoring curves (sigmoid VT curve with engine count bonus, logarithmic OTX pulse curve with threat actor bonus, AbuseIPDB confidence damping).
   - **Dynamic Weight Renormalization**: If a provider is skipped or circuit-broken, active provider weights are mathematically renormalized to sum to 1.0.
-  - Outputs an audited, human-readable reason per provider alongside categorical verdicts: `clean`, `low_risk`, `suspicious`, `malicious`.
+  - **Strong-Signal Floor**: Prevents confident malicious evidence from being diluted by neutral or partial feeds.
+  - Outputs an audited, human-readable reason per provider alongside categorical verdicts: `clean`, `low_risk`, `suspicious`, `malicious`, `unknown`.
 - **Multi-Tier Resilience & Flow Control**:
   - **Token Bucket Limiter**: Smooths requests to match upstream per-minute limits (RPM).
   - **Persistent Daily Quota Tracker**: Persists daily quota usage in SQLite across restarts with UTC midnight rollover.
-  - **Three-State Circuit Breakers**: Prevents cascading failures to failing upstreams (`CLOSED` &rarr; `OPEN` &rarr; `HALF-OPEN`).
-  - **Exponential Backoff**: Retries with jitter and automated `Retry-After` header parsing.
+  - **Three-State Circuit Breakers**: Prevents cascading failures to failing upstreams (`CLOSED` &rarr; `OPEN` &rarr; `HALF-OPEN`) with a strict single-probe gate.
+  - **Exponential Backoff**: Resilient retry policy for 5xx and 429 status codes with jitter and automated `Retry-After` header parsing.
 - **High-Performance Local Caching**:
-  - Persistent SQLite cache in Write-Ahead Logging (WAL) mode with variable TTL based on verdict (malicious cached 2h, clean cached 24h).
+  - Persistent SQLite cache in Write-Ahead Logging (WAL) mode with variable TTL based on verdict (malicious cached 6h, clean cached 24h).
   - **Request Coalescing (Single-Flight)**: Deduplicates simultaneous in-flight queries for identical indicators using `asyncio.Future` maps, eliminating cache stampedes.
 - **Multi-Format Report Generator**:
   - Exports reports in **JSON**, **CSV** (flattened 17-column format ready for SIEM ingest), **Markdown**, and **self-contained HTML dashboards** (dark cybersecurity theme, KPI cards, sortable table via vanilla JS, and search filtering with zero CDN dependencies).
 - **Security-First Architecture**:
   - Correlated request tracking (`X-Request-ID`).
-  - Automated `SecretRedactionFilter` guarantees API keys never leak into JSON logs.
+  - Automated `SecretRedactionFilter` guarantees API keys never leak into JSON logs or exception tracebacks.
   - Timing-safe constant-time API key verification (`hmac.compare_digest`).
   - Multi-stage hardened Docker image running as non-root user `threatlens` (UID 10001).
 
@@ -92,7 +92,7 @@ Requires Python 3.11+. The project is managed via [uv](https://docs.astral.sh/uv
 ```powershell
 # Clone the repository
 git clone https://github.com/Fantcoder/Threat-Lens.git
-cd threatlens
+cd Threat-Lens
 
 # Install dependencies using the PowerShell task runner
 .\tasks.ps1 install
@@ -102,7 +102,7 @@ cd threatlens
 ```bash
 # Clone the repository
 git clone https://github.com/Fantcoder/Threat-Lens.git
-cd threatlens
+cd Threat-Lens
 
 # Install dependencies using Makefile
 make install
@@ -217,27 +217,135 @@ Response:
   "ioc_type": "ipv4",
   "normalized_value": "185.220.101.5",
   "verdict": "malicious",
-  "risk_score": 85,
-  "score_confidence": 0.95,
+  "risk_score": 68,
+  "score_confidence": 1.0,
   "score_breakdown": [
     {
-      "provider": "VirusTotal",
-      "subscore": 90.0,
-      "weight": 0.45,
-      "contribution": 40.5,
-      "reason": "High detection ratio: 45/90 engines"
+      "provider": "virustotal",
+      "subscore": 33.2,
+      "weight": 0.5,
+      "contribution": 16.6,
+      "reason": "3/74 engines flagged malicious, 1 suspicious (ratio 4.7%)"
     },
     {
-      "provider": "AbuseIPDB",
-      "subscore": 80.0,
-      "weight": 0.35,
-      "contribution": 28.0,
-      "reason": "Abuse confidence 100% across 520 reports"
+      "provider": "otx",
+      "subscore": 61.7,
+      "weight": 0.25,
+      "contribution": 15.4,
+      "reason": "5 threat pulses (actors: APT28; malware: Sofacy)"
+    },
+    {
+      "provider": "abuseipdb",
+      "subscore": 85.0,
+      "weight": 0.25,
+      "contribution": 21.2,
+      "reason": "85% confidence across 42 reports (strong-signal floor applied: 68)"
+    }
+  ],
+  "providers": [
+    {
+      "provider": "virustotal",
+      "status": "ok",
+      "malicious_votes": 3,
+      "suspicious_votes": 1,
+      "total_engines": 74,
+      "confidence": 1.0,
+      "reputation": 15,
+      "tags": [
+        "dns",
+        "google"
+      ],
+      "malware_families": [],
+      "threat_actors": [],
+      "pulse_count": null,
+      "abuse_confidence": null,
+      "total_reports": null,
+      "geo": {
+        "country": "US",
+        "asn": 15169,
+        "as_owner": "GOOGLE"
+      },
+      "first_seen": "2011-03-13T07:06:40Z",
+      "last_seen": "2023-10-22T18:40:00Z",
+      "references": [
+        "https://www.virustotal.com/gui/ip-address/185.220.101.5"
+      ],
+      "latency_ms": 1,
+      "error_message": null,
+      "raw": null
+    },
+    {
+      "provider": "otx",
+      "status": "ok",
+      "malicious_votes": null,
+      "suspicious_votes": null,
+      "total_engines": null,
+      "confidence": null,
+      "reputation": null,
+      "tags": [
+        "c2",
+        "dns",
+        "malware",
+        "recon",
+        "scanner"
+      ],
+      "malware_families": [
+        "Sofacy"
+      ],
+      "threat_actors": [
+        "APT28"
+      ],
+      "pulse_count": 5,
+      "abuse_confidence": null,
+      "total_reports": null,
+      "geo": {
+        "country": "United States",
+        "asn": 15169,
+        "as_owner": null
+      },
+      "first_seen": null,
+      "last_seen": null,
+      "references": [
+        "https://otx.alienvault.com/indicator/ipv4/185.220.101.5"
+      ],
+      "latency_ms": 0,
+      "error_message": null,
+      "raw": null
+    },
+    {
+      "provider": "abuseipdb",
+      "status": "ok",
+      "malicious_votes": null,
+      "suspicious_votes": null,
+      "total_engines": null,
+      "confidence": null,
+      "reputation": null,
+      "tags": [
+        "data center/web hosting/transit"
+      ],
+      "malware_families": [],
+      "threat_actors": [],
+      "pulse_count": null,
+      "abuse_confidence": 85,
+      "total_reports": 42,
+      "geo": {
+        "country": "RU",
+        "asn": null,
+        "as_owner": "BadHost Networks"
+      },
+      "first_seen": null,
+      "last_seen": "2026-10-24T12:00:00Z",
+      "references": [
+        "https://www.abuseipdb.com/check/185.220.101.5"
+      ],
+      "latency_ms": 0,
+      "error_message": null,
+      "raw": null
     }
   ],
   "cached": false,
-  "generated_at": "2026-10-25T17:30:00Z",
-  "ttl_remaining": 7200
+  "generated_at": "2026-10-26T10:01:46Z",
+  "ttl_remaining": 21600
 }
 ```
 
@@ -251,16 +359,36 @@ All settings can be configured via environment variables or `.env` file:
 | :--- | :--- | :--- |
 | `THREATLENS_CACHE_DIR` | `./data` | Directory storing SQLite cache and daily quota databases |
 | `THREATLENS_API_KEY` | *None* | Optional service API key protecting REST endpoints via `X-API-Key` |
-| `THREATLENS_CLIENT_RATE_LIMIT`| `100` | In-memory token bucket rate limit per client IP (req/min) |
+| `THREATLENS_CORS_ORIGINS` | `[]` | Allowed CORS origins as comma-separated string or JSON array (default: none) |
+| `THREATLENS_LOG_LEVEL` | `INFO` | Application log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `THREATLENS_HOST` | `0.0.0.0` | API server listen host |
+| `THREATLENS_PORT` | `8000` | API server listen port |
+| `THREATLENS_CLIENT_RATE_LIMIT`| `60` | In-memory token bucket rate limit per client IP (req/min) |
 | `THREATLENS_VIRUSTOTAL_API_KEY` | *None* | VirusTotal v3 API key |
 | `THREATLENS_VIRUSTOTAL_RPM` | `4` | VirusTotal requests per minute limit |
 | `THREATLENS_VIRUSTOTAL_DAILY` | `500` | VirusTotal daily quota |
+| `THREATLENS_VIRUSTOTAL_TIMEOUT` | `15.0` | VirusTotal HTTP request timeout (seconds) |
 | `THREATLENS_OTX_API_KEY` | *None* | AlienVault OTX API key |
-| `THREATLENS_OTX_RPM` | `60` | AlienVault OTX requests per minute limit |
-| `THREATLENS_OTX_DAILY` | `10000` | AlienVault OTX daily quota |
+| `THREATLENS_OTX_RPM` | `10` | AlienVault OTX requests per minute limit |
+| `THREATLENS_OTX_DAILY` | `1000` | AlienVault OTX daily quota |
+| `THREATLENS_OTX_TIMEOUT` | `15.0` | AlienVault OTX HTTP request timeout (seconds) |
 | `THREATLENS_ABUSEIPDB_API_KEY` | *None* | AbuseIPDB API key |
-| `THREATLENS_ABUSEIPDB_RPM` | `60` | AbuseIPDB requests per minute limit |
+| `THREATLENS_ABUSEIPDB_RPM` | `10` | AbuseIPDB requests per minute limit |
 | `THREATLENS_ABUSEIPDB_DAILY` | `1000` | AbuseIPDB daily quota |
+| `THREATLENS_ABUSEIPDB_TIMEOUT` | `15.0` | AbuseIPDB HTTP request timeout (seconds) |
+| `THREATLENS_MAX_RATE_LIMIT_WAIT` | `5.0` | Max wait time before token bucket yields `rate_limited` (seconds) |
+| `THREATLENS_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | Consecutive failures before circuit breaker trips `OPEN` |
+| `THREATLENS_CIRCUIT_BREAKER_RECOVERY_TIMEOUT` | `60.0` | Cool-down time before transitioning to `HALF-OPEN` (seconds) |
+| `THREATLENS_WEIGHT_VIRUSTOTAL` | `0.50` | Relative scoring weight for VirusTotal |
+| `THREATLENS_WEIGHT_OTX` | `0.25` | Relative scoring weight for AlienVault OTX |
+| `THREATLENS_WEIGHT_ABUSEIPDB` | `0.25` | Relative scoring weight for AbuseIPDB |
+| `THREATLENS_STRONG_SIGNAL_FACTOR` | `0.8` | Floor factor preventing strong evidence dilution |
+| `THREATLENS_MIN_CONFIDENCE_FOR_CLEAN` | `0.6` | Minimum confidence required to issue a clean/low-risk verdict |
+| `THREATLENS_TTL_MALICIOUS` | `21600` | Cache TTL for malicious verdicts (6 hours, seconds) |
+| `THREATLENS_TTL_SUSPICIOUS` | `21600` | Cache TTL for suspicious verdicts (6 hours, seconds) |
+| `THREATLENS_TTL_CLEAN` | `86400` | Cache TTL for clean verdicts (24 hours, seconds) |
+| `THREATLENS_TTL_LOW_RISK` | `86400` | Cache TTL for low-risk verdicts (24 hours, seconds) |
+| `THREATLENS_TTL_UNKNOWN` | `900` | Cache TTL for unknown verdicts (15 minutes, seconds) |
 
 ---
 
@@ -286,7 +414,7 @@ docker compose down
 ThreatLens enforces strict quality gates:
 
 ```powershell
-# Run full Pytest test suite (202+ tests)
+# Run full Pytest test suite (226+ tests)
 .\tasks.ps1 test
 
 # Enforce coverage threshold (>=90%)

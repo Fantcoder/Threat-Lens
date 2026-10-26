@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **IoC Detector & Refanging Engine**:
   - Auto-detection for IPv4, IPv6, Domains (FQDNs with PSL validation via `tldextract`), URLs, and cryptographic hashes (MD5, SHA1, SHA256).
   - Automatic refanging of security obfuscations: `hxxp://`, `hxxps://`, `[.]`, `(.)`, `[dot]`, and `[:]`.
-  - Anti-SSRF validation rejecting RFC 1918, RFC 3927, RFC 4291, and cloud metadata addresses (`169.254.169.254`).
+  - RFC non-routable address rejection (RFC 1918, RFC 3927, RFC 4291, and cloud metadata `169.254.169.254`) for input hygiene.
 - **Concurrent Provider Adapters**:
   - VirusTotal v3 (IPv4, IPv6, Domain, URL via URL-safe unpadded base64, Hashes).
   - AlienVault OTX (IPv4, IPv6, Domain, URL, Hashes via OTX general indicator endpoints).

@@ -16,7 +16,7 @@ This document provides metric-backed resume bullet points, architectural talking
 ### Option B: Security & Resilience Focus
 > **ThreatLens | Threat Intelligence Microservice** &mdash; *FastAPI, Typer, Resilience, CI/CD*
 > - Designed an explainable, non-linear risk scoring engine that dynamically renormalizes weights during partial provider failures, outputting mathematical breakdown telemetry and categorical verdicts with RFC 7807 problem detail error envelopes.
-> - Mitigated SSRF and reconnaissance vectors by engineering a custom IoC detector and refanger that enforces strict RFC 1918/3927/4291 validation, public suffix filtering via `tldextract`, and loopback/cloud-metadata blocking.
+> - Enforced input hygiene and non-routable address rejection by engineering a custom IoC detector and refanger that validates RFC 1918/3927/4291 boundaries, public suffix filtering via `tldextract`, and loopback/cloud-metadata blocking.
 > - Integrated automated logging filters for dynamic **secret redaction**, timing-safe constant-time authentication (`hmac.compare_digest`), and multi-stage non-root containerization scanning clean against **Bandit SAST** and **Trivy**.
 
 ---
@@ -27,7 +27,7 @@ This document provides metric-backed resume bullet points, architectural talking
 >
 > *To solve this, I designed and built **ThreatLens**, an open-source async threat intelligence aggregator and CLI service.*
 >
-> *I built it in Python 3.11 using FastAPI and Typer. When an IoC is ingested—even if it's defanged like `hxxps://bad[.]com`—ThreatLens auto-detects the indicator type, validates it against private-IP SSRF boundaries, and fans out async requests concurrently across VirusTotal, AlienVault OTX, and AbuseIPDB.*
+> *I built it in Python 3.11 using FastAPI and Typer. When an IoC is ingested—even if it's defanged like `hxxps://bad[.]com`—ThreatLens auto-detects the indicator type, validates it against RFC non-routable IP boundaries, and fans out async requests concurrently across VirusTotal, AlienVault OTX, and AbuseIPDB.*
 >
 > *What makes ThreatLens production-grade is its resilience layer: I implemented in-flight request coalescing to prevent cache stampedes, per-provider token buckets and persistent SQLite daily quota tracking to prevent API lockouts, and three-state circuit breakers to fast-fail failing upstreams. The normalized results feed into an explainable mathematical scoring engine with dynamic weight renormalization.*
 >
