@@ -282,7 +282,7 @@ Scenario 8: allowed_probes=1, rejected_probes=9
 
 ### 1.6 Summary of Remaining Implemented Items
 
-- **Item 1 (Commit `070ef52`):** `ci: align default branch to main and pin trivy action`. Pinned `aquasecurity/trivy-action@0.29.0` to address CVE-2024-4340.
+- **Item 1 (Commit `070ef52`):** `ci: align default branch to main and pin trivy action`. Pinned `aquasecurity/trivy-action@v0.36.0` to address CVE-2024-4340 with modern official release tag.
 - **Item 2 (Commit `d532216`):** `build: update pytest-asyncio for pytest 9 compatibility`. Bumped `pytest-asyncio>=1.0.0,<2` with clean, deprecation-free execution.
 - **Item 3 (Commit `006cc7d`):** `fix: resolve docker venv relocation and console-script shebangs`. Fixed builder `WORKDIR /app` and replaced editable install with `--no-editable` into site-packages.
 - **Item 9 (Commit `938bfef`):** `fix: resolve security, cors, pragma, and lifecycle robustness issues`. Timing-safe API auth via `hmac.compare_digest`, configurable CORS, read-only `/ready` probe, WAL and busy-timeout pragmas, HTTP 502 for all-provider failures, bounded ClientRateLimiter, raw payload stripping before cache, and secret redaction in exception tracebacks.
