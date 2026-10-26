@@ -360,7 +360,8 @@ class Aggregator:
 
             break
 
-        assert result is not None
+        if result is None:
+            raise RuntimeError("Unreachable: aggregator result is None")
 
         # Update circuit breaker state: record ONE failure/success per exhausted lookup
         if cb:
