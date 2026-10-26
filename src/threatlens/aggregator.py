@@ -284,6 +284,8 @@ class Aggregator:
             provider.name, provider.rate_limit_daily
         )
         if not has_quota:
+            if cb:
+                await cb.release_probe()
             msg = f"Daily quota ({provider.rate_limit_daily}) exhausted for {provider.name}"
             return ProviderResult(
                 provider=provider.name,
@@ -296,6 +298,8 @@ class Aggregator:
         if bucket:
             acquired = await bucket.acquire(1.0, max_wait=self.settings.max_rate_limit_wait)
             if not acquired:
+                if cb:
+                    await cb.release_probe()
                 await self.quota_tracker.refund(provider.name)
                 msg = (
                     f"Per-minute rate limit ({provider.rate_limit_rpm}) "

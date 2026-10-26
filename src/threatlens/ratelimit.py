@@ -188,30 +188,48 @@ class CircuitBreaker:
         self.state: CircuitState = CircuitState.CLOSED
         self.failure_count: int = 0
         self.last_failure_time: float = 0.0
+        self._half_open_probe_in_flight: bool = False
         self._lock = asyncio.Lock()
 
     async def can_execute(self) -> bool:
-        """Check if request execution is allowed under current circuit state."""
+        """Check if request execution is allowed under current circuit state.
+
+        In HALF_OPEN state, only ONE caller may acquire permission to probe.
+        Subsequent callers receive False until the probe completes (record_success/failure).
+        """
         async with self._lock:
             now = self.clock()
             if self.state == CircuitState.OPEN:
                 if now - self.last_failure_time > self.recovery_timeout:
                     self.state = CircuitState.HALF_OPEN
+                    self._half_open_probe_in_flight = True
+                    return True
+                return False
+            if self.state == CircuitState.HALF_OPEN:
+                if not self._half_open_probe_in_flight:
+                    self._half_open_probe_in_flight = True
                     return True
                 return False
             return True
+
+    async def release_probe(self) -> None:
+        """Release the probe gate if a probe attempt was aborted before execution."""
+        async with self._lock:
+            self._half_open_probe_in_flight = False
 
     async def record_success(self) -> None:
         """Record a successful operation."""
         async with self._lock:
             self.failure_count = 0
             self.state = CircuitState.CLOSED
+            self._half_open_probe_in_flight = False
 
     async def record_failure(self) -> None:
         """Record an operation failure and trip breaker if threshold is reached."""
         async with self._lock:
             self.failure_count += 1
             self.last_failure_time = self.clock()
+            self._half_open_probe_in_flight = False
 
             if self.state == CircuitState.HALF_OPEN or self.failure_count >= self.failure_threshold:
                 self.state = CircuitState.OPEN
