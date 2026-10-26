@@ -92,6 +92,8 @@ class DailyQuotaTracker:
         """Create the quota tracking table if it does not already exist."""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("PRAGMA journal_mode=WAL")
+            await db.execute("PRAGMA busy_timeout=5000")
             await db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS daily_quotas (

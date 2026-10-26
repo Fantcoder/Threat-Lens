@@ -309,3 +309,21 @@ async def test_retry_policy_exhaustion() -> None:
                 raise httpx.TimeoutException("Persistent connection timeout")
 
     assert attempts == 3
+
+
+@pytest.mark.asyncio
+async def test_daily_quota_wal_and_busy_timeout_pragmas(tmp_path: Path) -> None:
+    db_path = tmp_path / "quota_pragma_test.sqlite"
+    tracker = DailyQuotaTracker(db_path)
+    await tracker.initialize()
+
+    import aiosqlite
+
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute("PRAGMA journal_mode")
+        row = await cursor.fetchone()
+        assert row is not None and row[0].lower() == "wal", f"Expected WAL, got {row}"
+
+        cursor = await db.execute("PRAGMA busy_timeout")
+        row = await cursor.fetchone()
+        assert row is not None and row[0] == 5000, f"Expected 5000, got {row}"

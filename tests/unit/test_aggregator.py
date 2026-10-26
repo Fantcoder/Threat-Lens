@@ -606,3 +606,57 @@ async def test_second_lookup_after_partial_requeries_once_short_ttl_expires(tmp_
     r3 = await agg.lookup("8.8.8.8")
     assert r3.cached is False
     assert p_vt.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_cache_strips_raw_and_bypasses_cache_when_include_raw_is_true(
+    tmp_path: Path,
+) -> None:
+    cache = LookupCache(tmp_path / "cache.sqlite")
+    await cache.initialize()
+    quota = DailyQuotaTracker(tmp_path / "quota.sqlite")
+    await quota.initialize()
+    settings = Settings()
+    client = httpx.AsyncClient()
+
+    p_vt = MockProvider(
+        "virustotal",
+        result_to_return=ProviderResult(
+            provider="virustotal",
+            status="ok",
+            malicious_votes=0,
+            total_engines=70,
+            raw={"raw_key": "raw_val_secret"},
+        ),
+    )
+    agg = Aggregator(
+        providers=[p_vt],
+        cache=cache,
+        quota_tracker=quota,
+        settings=settings,
+        client=client,
+    )
+
+    # 1. First lookup with include_raw=True: returned report has raw
+    r1 = await agg.lookup("8.8.8.8", include_raw=True)
+    assert r1.providers[0].raw == {"raw_key": "raw_val_secret"}
+    assert p_vt.call_count == 1
+
+    # Check that cache does NOT store raw payload
+    cached = await cache.get(cache.compute_hash("8.8.8.8", IoCType.IPV4))
+    assert cached is not None
+    assert cached.providers[0].raw is None, (
+        f"Expected raw to be stripped, got {cached.providers[0].raw}"
+    )
+
+    # 2. Second lookup with include_raw=False hits cache
+    r2 = await agg.lookup("8.8.8.8", include_raw=False)
+    assert r2.cached is True
+    assert r2.providers[0].raw is None
+    assert p_vt.call_count == 1
+
+    # 3. Third lookup with include_raw=True BYPASSES cache
+    r3 = await agg.lookup("8.8.8.8", include_raw=True)
+    assert r3.cached is False
+    assert r3.providers[0].raw == {"raw_key": "raw_val_secret"}
+    assert p_vt.call_count == 2

@@ -7,9 +7,9 @@ Never hardcodes secrets.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,8 +28,27 @@ class Settings(BaseSettings):
     otx_api_key: SecretStr | None = None
     abuseipdb_api_key: SecretStr | None = None
 
-    # --- Service Authentication ---
+    # --- Service Authentication & Access Control ---
     api_key: SecretStr | None = None
+    cors_origins: list[str] = Field(default_factory=list)
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: Any) -> list[str]:
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return []
+            if s.startswith("[") and s.endswith("]"):
+                import contextlib
+                import json
+
+                with contextlib.suppress(Exception):
+                    res: Any = json.loads(s)
+                    if isinstance(res, list):
+                        return [str(x) for x in res]
+            return [x.strip() for x in s.split(",") if x.strip()]
+        return v or []
 
     # --- Application & Storage ---
     cache_dir: Path = Field(default=Path("./data"))

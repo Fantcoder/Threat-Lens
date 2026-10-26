@@ -5,7 +5,7 @@ description = "Threat Intelligence Aggregator — query, normalize, and score Io
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11,<3.14"
-authors = [{name = "ThreatLens Contributors"}]
+authors = [{name = "Fantcoder"}]
 keywords = ["threat-intelligence", "cybersecurity", "ioc", "virustotal", "async", "fastapi"]
 classifiers = [
     "Development Status :: 4 - Beta",

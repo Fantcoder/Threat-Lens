@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import aiosqlite
 import pytest
 
 from threatlens.cache import LookupCache
@@ -101,3 +102,19 @@ def test_ttl_for_verdict() -> None:
     assert LookupCache.get_ttl_for_verdict(Verdict.CLEAN, settings) == settings.ttl_clean
     assert LookupCache.get_ttl_for_verdict(Verdict.LOW_RISK, settings) == settings.ttl_low_risk
     assert LookupCache.get_ttl_for_verdict(Verdict.UNKNOWN, settings) == settings.ttl_unknown
+
+
+@pytest.mark.asyncio
+async def test_cache_wal_and_busy_timeout_pragmas(tmp_path: Path) -> None:
+    db_path = tmp_path / "pragma_test.sqlite"
+    cache = LookupCache(db_path)
+    await cache.initialize()
+
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute("PRAGMA journal_mode")
+        row = await cursor.fetchone()
+        assert row is not None and row[0].lower() == "wal", f"Expected WAL, got {row}"
+
+        cursor = await db.execute("PRAGMA busy_timeout")
+        row = await cursor.fetchone()
+        assert row is not None and row[0] == 5000, f"Expected 5000, got {row}"

@@ -8,6 +8,7 @@ coalesces in-flight identical lookups, and caches normalized reports.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import random
 import time
 from collections.abc import Callable, Coroutine
@@ -158,21 +159,22 @@ class Aggregator:
         ioc_type, normalized_value = detect_ioc(raw_ioc)
         ioc_hash = self.cache.compute_hash(normalized_value, ioc_type)
 
-        # 1. Check persistent cache unless refresh requested
-        if not refresh:
+        # 1. Check persistent cache unless refresh requested or raw payloads requested
+        if not refresh and not include_raw:
             cached_report = await self.cache.get(ioc_hash)
             if cached_report is not None:
                 return cached_report
 
-        # 2. Request coalescing: share in-flight upstream lookups for the same indicator
+        # 2. Request coalescing: share in-flight upstream lookups for identical indicator and mode
+        coalesce_key = f"{ioc_hash}:{int(include_raw)}"
         async with self._inflight_lock:
-            if ioc_hash in self._inflight:
+            if coalesce_key in self._inflight:
                 # Piggyback on in-flight request
-                return await self._inflight[ioc_hash]
+                return await self._inflight[coalesce_key]
 
             loop = asyncio.get_running_loop()
             future: asyncio.Future[AggregatedReport] = loop.create_future()
-            self._inflight[ioc_hash] = future
+            self._inflight[coalesce_key] = future
 
         try:
             report = await self._execute_fanout(raw_ioc, ioc_type, normalized_value, include_raw)
@@ -183,7 +185,11 @@ class Aggregator:
             raise
         finally:
             async with self._inflight_lock:
-                self._inflight.pop(ioc_hash, None)
+                self._inflight.pop(coalesce_key, None)
+            if future.done() and not future.cancelled():
+                # Avoid "Future exception was never retrieved" warnings if no other waiters joined
+                with contextlib.suppress(Exception):
+                    future.exception()
 
     async def _execute_fanout(
         self,
@@ -238,9 +244,16 @@ class Aggregator:
             ttl_remaining=ttl,
         )
 
-        # Cache report and insert into audit history
-        await self.cache.put(report, ttl)
-        await self.cache.add_history(report)
+        # Strip raw payloads from provider results before caching
+        if any(p.raw is not None for p in provider_results):
+            cleaned_providers = [p.model_copy(update={"raw": None}) for p in provider_results]
+            report_to_cache = report.model_copy(update={"providers": cleaned_providers})
+        else:
+            report_to_cache = report
+
+        # Cache sanitized report and insert into audit history
+        await self.cache.put(report_to_cache, ttl)
+        await self.cache.add_history(report_to_cache)
 
         return report
 
