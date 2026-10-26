@@ -123,6 +123,36 @@ This document tracks verification status across build phases. In accordance with
   - `CONTRIBUTING.md`, `SECURITY.md`, `LICENSE` (MIT), `CHANGELOG.md`.
   - `RESUME_BULLETS.md`: Metric-backed resume bullets and 60-second technical interview elevator pitch.
 
+### Phase 11: Production Hardening & Resilience Audit (Items 1-8)
+- **Item 1: CI Default Branch & Trivy Action Pinning**:
+  - Aligned branch to `main`, pushed to `origin main`.
+  - Pinned `aquasecurity/trivy-action@0.29.0` with comment documenting the CVE-2024-4340 vulnerability on unpinned v0.28.0 action runner tags.
+- **Item 2: Pytest-asyncio & Pytest 9 Compatibility**:
+  - Bumped `pytest-asyncio>=1.0.0,<2` (resolved to 1.4.0).
+  - Clean test runs on Python 3.11 & 3.12 without deprecation warnings.
+- **Item 3: Docker Multi-Stage Build & Venv Relocation**:
+  - Fixed builder `WORKDIR /app` matching runtime stage.
+  - Replaced editable install with `uv sync --frozen --no-dev --no-editable` into site-packages.
+- **Item 4: Guard Check Reordering & Daily Quota Refund**:
+  - Verified guard execution order: `supports()` -> `is_configured()` -> `circuit_breaker.can_execute()` -> `daily_quota.check_and_increment()` -> `token_bucket.acquire()`.
+  - Verified `quota_tracker.refund()` replenishes quota when per-minute token bucket rejects.
+- **Item 5: Upstream 5xx and 429 Retry Policy**:
+  - Verified 3-attempt exponential backoff + jitter for transient network errors, timeouts, 5xx, and 429.
+  - Verified extraction and adherence to `Retry-After` header.
+- **Item 6: Partial Provider Failure & False-Clean Prevention**:
+  - Added `min_confidence_for_clean: float = 0.6` setting.
+  - Proven that low-confidence clean reports downgrade to `UNKNOWN` with audit reason `(inconclusive: provider(s) unavailable)`.
+  - Cached partial failures with `ttl_unknown` (15m, 900s).
+- **Item 7: Strong-Signal Floor & Suspicious Vote Weighting**:
+  - Computed effective detection ratio using both malicious and suspicious votes ($D_{\text{effective}} = M + 0.5 \times S$).
+  - Implemented strong-signal floor $\max(\text{WeightedAverage}, \text{round}(\text{strong\_signal\_factor} \times \max(\text{subscores})))$.
+  - 100% statement and branch coverage on `scoring.py` (119/119 statements, 60/60 branches).
+- **Item 8: Circuit Breaker HALF_OPEN Single-Probe Gate**:
+  - Proved bug test-first: 10 concurrent requests in HALF_OPEN previously allowed 10 simultaneous probes (`AssertionError: Expected exactly 1 probe allowed, got 10`).
+  - Implemented `_half_open_probe_in_flight` gate flag and `release_probe()`.
+  - Proved fix: exactly 1 request acquires probe permission; remaining 9 rejected. Success closes breaker; failure re-opens breaker and resets recovery timeout.
+  - 100% statement coverage on `ratelimit.py` (143/143 statements).
+
 ---
 
 ## 2. Needs Verification on Your Machine (UNVERIFIED in sandbox)
@@ -131,5 +161,6 @@ This document tracks verification status across build phases. In accordance with
 - **`make` command (UNVERIFIED)**: `make` is not installed on this sandbox Windows image (`tasks.ps1` provided and tested). If you have `make` installed (e.g. via Scoop/Chocolatey/MSYS2), verify `make install` and `make test`.
 - **Real Provider API Lookups (UNVERIFIED)**: Live calls to VirusTotal, AlienVault OTX, and AbuseIPDB require real API keys in `.env`. In this repo, all tests strictly use recorded fixtures and `respx` mocks.
 - **GitHub Actions Workflows (UNVERIFIED)**: `.github/workflows/ci.yml` and `.github/workflows/security.yml` (Trivy container scanning, CodeQL SAST, Bandit, Pip-audit, Dependabot) run in GitHub runner infrastructure upon push.
+
 
 
