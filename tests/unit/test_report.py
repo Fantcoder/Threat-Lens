@@ -261,10 +261,9 @@ def test_render_html(sample_reports: list[AggregatedReport]) -> None:
     assert '<div class="kpi-val">4</div>' in html_str  # Total
     assert '<div class="kpi-val" style="color: var(--malicious);">1</div>' in html_str
 
-    # Indicators present
-    assert "185.220.101.5" in html_str
-    assert "evil-phishing.com" in html_str
-    assert "1.1.1.1" in html_str
+    # Indicators present in table cells
+    for r in sample_reports:
+        assert f'<td class="font-mono">{r.normalized_value}</td>' in html_str
     assert "Mirai" in html_str
 
     # Vanilla JS and inline CSS

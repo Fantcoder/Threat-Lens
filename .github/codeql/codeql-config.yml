@@ -1,0 +1,10 @@
+name: "ThreatLens CodeQL Configuration"
+
+# Focus CodeQL static security analysis on source code
+paths:
+  - 'src'
+
+paths-ignore:
+  - 'tests'
+  - 'docs'
+  - 'scripts'

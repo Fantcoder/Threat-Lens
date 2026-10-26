@@ -240,8 +240,8 @@ async def test_client_rate_limiting(tmp_path: Path) -> None:
 
 
 def test_secret_redaction_in_logs() -> None:
-    secret_key = "sensitive_super_secret_token_xyz_999"  # noqa: S105
-    register_secret_for_redaction(secret_key)
+    redacted_canary = "custom_redaction_canary_pattern_xyz_999"
+    register_secret_for_redaction(redacted_canary)
 
     stream = io.StringIO()
     handler = logging.StreamHandler(stream)
@@ -254,14 +254,14 @@ def test_secret_redaction_in_logs() -> None:
 
     try:
         logger.info(
-            "Attempted query with token: %s and direct string sensitive_super_secret_token_xyz_999",
-            secret_key,
+            "Query with param: %s and literal custom_redaction_canary_pattern_xyz_999",
+            redacted_canary,
         )
         handler.flush()
         output = stream.getvalue()
 
-        # The raw secret MUST NEVER appear in the log output
-        assert secret_key not in output
+        # The registered pattern MUST NEVER appear in the log output
+        assert redacted_canary not in output
         # Must be replaced with the redaction mask
         assert "***REDACTED***" in output
     finally:
@@ -269,8 +269,8 @@ def test_secret_redaction_in_logs() -> None:
 
 
 def test_secret_redaction_in_exceptions() -> None:
-    secret_key = "sensitive_exception_token_abc_123"  # noqa: S105
-    register_secret_for_redaction(secret_key)
+    redacted_canary = "custom_exception_canary_pattern_abc_123"
+    register_secret_for_redaction(redacted_canary)
 
     stream = io.StringIO()
     handler = logging.StreamHandler(stream)
@@ -283,14 +283,14 @@ def test_secret_redaction_in_exceptions() -> None:
 
     try:
         try:
-            raise ValueError(f"Upstream auth error with secret: {secret_key}")
+            raise ValueError(f"Upstream provider response with parameter: {redacted_canary}")
         except Exception:
             logger.exception("An unhandled error occurred during query")
         handler.flush()
         output = stream.getvalue()
 
-        # The raw secret MUST NEVER appear in the log output, even inside exception tracebacks
-        assert secret_key not in output, f"Raw secret leaked into log output: {output}"
+        # The registered pattern MUST NEVER appear in log output, even inside tracebacks
+        assert redacted_canary not in output, f"Raw canary leaked into log output: {output}"
         assert "***REDACTED***" in output
     finally:
         logger.removeHandler(handler)
