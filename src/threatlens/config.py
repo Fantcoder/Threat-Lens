@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     # Minimum score confidence required to issue a clean or low_risk verdict
     min_confidence_for_clean: float = 0.6
 
+    # Strong-signal floor factor: prevents strong evidence from being diluted by neutral feeds
+    strong_signal_factor: float = 0.8
+
     # --- Cache TTL (seconds) ---
     ttl_malicious: int = 21600  # 6 hours
     ttl_suspicious: int = 21600  # 6 hours

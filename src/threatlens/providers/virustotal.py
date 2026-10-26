@@ -201,6 +201,7 @@ class VirusTotalProvider(BaseProvider):
             status="ok",
             start_time=start_time,
             malicious_votes=malicious,
+            suspicious_votes=suspicious,
             total_engines=total_engines,
             confidence=confidence,
             reputation=reputation,

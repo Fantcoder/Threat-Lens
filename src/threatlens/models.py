@@ -59,6 +59,7 @@ class ProviderResult(BaseModel):
     provider: str
     status: ProviderStatus
     malicious_votes: int | None = None
+    suspicious_votes: int | None = None
     total_engines: int | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     reputation: int | None = None

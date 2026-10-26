@@ -46,7 +46,7 @@ def compute_virustotal_subscore(result: ProviderResult) -> tuple[float, str]:
     """
     total = result.total_engines or 0
     malicious = result.malicious_votes or 0
-    suspicious = 0
+    suspicious = result.suspicious_votes or 0
 
     if total == 0:
         return 0.0, "No detection engine statistics available"
@@ -69,7 +69,13 @@ def compute_virustotal_subscore(result: ProviderResult) -> tuple[float, str]:
     bonus = 5.0 if has_malware_tag else 0.0
 
     subscore = min(100.0, base + bonus)
-    reason = f"{malicious}/{total} engines flagged malicious (ratio {ratio:.1%})"
+    if suspicious > 0:
+        reason = (
+            f"{malicious}/{total} engines flagged malicious, "
+            f"{suspicious} suspicious (ratio {ratio:.1%})"
+        )
+    else:
+        reason = f"{malicious}/{total} engines flagged malicious (ratio {ratio:.1%})"
     if bonus > 0.0:
         reason += "; malware tag bonus applied"
 
@@ -222,7 +228,27 @@ def score_report(
             )
         )
 
-    final_score = round(total_weighted_score)
+    weighted_average = total_weighted_score
+
+    # Strong-signal floor: max(weighted_average, strong_signal_factor * max_subscore)
+    max_subscore = 0.0
+    max_provider: str | None = None
+    for r in ok_results:
+        subscore, _ = subscores[r.provider]
+        if subscore > max_subscore:
+            max_subscore = subscore
+            max_provider = r.provider
+
+    floor_score = settings.strong_signal_factor * max_subscore
+
+    if floor_score > weighted_average:
+        final_score = round(floor_score)
+        for item in breakdown:
+            if item.provider == max_provider:
+                item.reason = f"{item.reason} (strong-signal floor applied: {final_score})"
+    else:
+        final_score = round(weighted_average)
+
     final_score = max(0, min(100, final_score))
 
     # Map to verdict thresholds

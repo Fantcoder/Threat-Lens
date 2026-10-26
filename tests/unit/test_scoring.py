@@ -272,3 +272,91 @@ def test_score_report_unknown_provider(default_settings: Settings) -> None:
     assert verdict == Verdict.CLEAN
     assert score == 0
     assert "Unknown provider custom_unregistered" in breakdown[0].reason
+
+
+def test_virustotal_subscore_suspicious_votes_counted() -> None:
+    # 0 malicious, 20 suspicious out of 90 -> effective_bad = 10, ratio = 10/90 = 0.111
+    res = ProviderResult(
+        provider="virustotal",
+        status="ok",
+        malicious_votes=0,
+        suspicious_votes=20,
+        total_engines=90,
+    )
+    score, reason = compute_virustotal_subscore(res)
+    assert score > 0.0, f"Expected positive subscore from suspicious votes, got {score}"
+    assert "suspicious" in reason.lower()
+
+
+def test_strong_signal_floor_vt_45_90_otx_0_abuse_0_malicious(
+    default_settings: Settings,
+) -> None:
+    # VT 45/90 (ratio 0.5, subscore 93.3), OTX 0 (subscore 0), AbuseIPDB 0 (subscore 0)
+    # Weighted average: 93.3 * 0.5 = 46.65 (47, which would be suspicious)
+    # Strong signal floor: 0.8 * 93.3 = 74.64 (75 -> malicious)
+    results = [
+        ProviderResult(provider="virustotal", status="ok", malicious_votes=45, total_engines=90),
+        ProviderResult(provider="otx", status="ok", pulse_count=0),
+        ProviderResult(provider="abuseipdb", status="ok", abuse_confidence=0, total_reports=0),
+    ]
+    verdict, score, _conf, breakdown = score_report(results, default_settings)
+    assert verdict == Verdict.MALICIOUS, f"Expected MALICIOUS, got {verdict}"
+    assert score >= 65
+    assert any("strong-signal floor" in b.reason for b in breakdown)
+
+
+def test_vt_1_90_alone_gives_low_risk(default_settings: Settings) -> None:
+    # VT 1/90 alone -> ratio 1/90 = 0.011, subscore 23.1, floor 18.5, final_score = 23 -> LOW_RISK
+    results = [
+        ProviderResult(provider="virustotal", status="ok", malicious_votes=1, total_engines=90),
+    ]
+    verdict, score, _, _ = score_report(results, default_settings)
+    assert verdict == Verdict.LOW_RISK, f"Expected LOW_RISK, got {verdict}"
+    assert score <= default_settings.threshold_low_risk_max
+
+
+def test_strong_signal_floor_vt_60_70_trojan_otx_0_malicious(
+    default_settings: Settings,
+) -> None:
+    # VT 60/70 with trojan tag -> subscore 100.0, OTX 0 -> subscore 0.0
+    # Weighted average: 100 * (0.5 / 0.75) = 66.7
+    # Strong signal floor: 0.8 * 100 = 80.0 -> score >= 80 -> MALICIOUS
+    results = [
+        ProviderResult(
+            provider="virustotal",
+            status="ok",
+            malicious_votes=60,
+            total_engines=70,
+            tags=["trojan"],
+        ),
+        ProviderResult(provider="otx", status="ok", pulse_count=0),
+    ]
+    verdict, score, _, breakdown = score_report(results, default_settings)
+    assert verdict == Verdict.MALICIOUS, f"Expected MALICIOUS, got {verdict}"
+    assert score >= 80, f"Expected score >= 80, got {score}"
+    assert any("strong-signal floor" in b.reason for b in breakdown)
+
+
+def test_everything_clean_stays_clean(default_settings: Settings) -> None:
+    results = [
+        ProviderResult(provider="virustotal", status="ok", malicious_votes=0, total_engines=70),
+        ProviderResult(provider="otx", status="ok", pulse_count=0),
+        ProviderResult(provider="abuseipdb", status="ok", abuse_confidence=0, total_reports=0),
+    ]
+    verdict, score, conf, _ = score_report(results, default_settings)
+    assert verdict == Verdict.CLEAN
+    assert score == 0
+    assert conf == 1.0
+
+
+def test_score_report_low_confidence_downgraded_to_unknown(default_settings: Settings) -> None:
+    # VT fails, only OTX returns clean -> confidence = 0.33 (< 0.60)
+    results = [
+        ProviderResult(provider="virustotal", status="rate_limited"),
+        ProviderResult(provider="otx", status="ok", pulse_count=0),
+    ]
+    verdict, score, conf, breakdown = score_report(results, default_settings)
+    assert verdict == Verdict.UNKNOWN
+    assert score == 0
+    assert conf == 0.33
+    assert any("inconclusive: provider(s) unavailable" in b.reason for b in breakdown)

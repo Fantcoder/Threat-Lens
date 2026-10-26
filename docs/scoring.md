@@ -1,15 +1,19 @@
 # ThreatLens Scoring Engine Documentation
 
-ThreatLens calculates a deterministic, explainable risk score (0–100) and assigns a categorical verdict to an Indicator of Compromise (IoC) based on normalized multi-provider intelligence.
+ThreatLens calculates a deterministic, explainable risk score (0–100) and assigns a categorical verdict to an Indicator of Compromise (IoC) based on normalized multi-provider threat intelligence.
+
+> [!NOTE]
+> Threat intelligence scoring is inherently a statistical and reputational heuristic, not ground truth. ThreatLens synthesizes third-party security telemetry; a clean score indicates an absence of reported malice, not guaranteed safety.
 
 ---
 
 ## 1. Core Principles
 
-1. **Heuristic, Not Ground Truth**: Threat intelligence aggregation is a statistical and reputational heuristic. ThreatLens synthesizes third-party observations; a clean score indicates an absence of reported malice, not guaranteed safety.
-2. **Dynamic Weight Renormalization**: When one or more providers fail, time out, or are rate-limited, remaining responsive (`ok`) providers have their weights dynamically renormalized so the composite score remains calibrated on a 0–100 scale.
-3. **Transparent Explainability**: Every aggregated score includes a full breakdown specifying each provider's subscore, active weight, arithmetic contribution, and a plain-text audit explanation.
-4. **Degraded Confidence Reporting**: If only a fraction of applicable providers return results, the `score_confidence` metric is scaled down proportionally to reflect reduced visibility.
+1. **Heuristic Assessment**: Threat intelligence scores are heuristic indicators of risk based on vendor consensus, telemetry feeds, and community pulses.
+2. **Strong-Signal Preservation**: Neutral or non-reporting feeds ("nothing known") do not dilute overwhelming evidence of malice from high-detection feeds.
+3. **Dynamic Weight Renormalization**: When one or more providers fail, time out, or are rate-limited, remaining responsive (`ok`) providers have their weights dynamically renormalized so the composite score remains calibrated on a 0–100 scale.
+4. **Inconclusive Result Protection**: If key providers are offline and score confidence falls below `min_confidence_for_clean` (0.60), a potentially false `clean` or `low_risk` verdict is guarded and reported as `unknown` with a short cache TTL (15 minutes).
+5. **Transparent Explainability**: Every aggregated score includes a full breakdown specifying each provider's subscore, active weight, arithmetic contribution, and plain-text audit explanation.
 
 ---
 
@@ -21,7 +25,7 @@ ThreatLens calculates a deterministic, explainable risk score (0–100) and assi
 | **10 – 34** | `low_risk` | Low-volume or isolated scan reports; unlikely to be active malware infrastructure. |
 | **35 – 64** | `suspicious` | Multiple detection engines, active threat pulses, or moderate abuse reports. |
 | **65 – 100** | `malicious` | Significant consensus among AV engines, high confidence abuse reports, or confirmed adversary attribution. |
-| **N/A** | `unknown` | No provider returned responsive (`ok`) data (e.g. all rate-limited or offline). |
+| **N/A** | `unknown` | Inconclusive intelligence (low confidence due to provider outages or all skipped/offline). |
 
 ---
 
@@ -30,7 +34,7 @@ ThreatLens calculates a deterministic, explainable risk score (0–100) and assi
 ### A. VirusTotal (v3)
 
 Let:
-$$D_{\text{effective}} = \text{malicious} + 0.5 \times \text{suspicious}$$
+$$D_{\text{effective}} = \text{malicious\_votes} + 0.5 \times \text{suspicious\_votes}$$
 $$R = \frac{D_{\text{effective}}}{\max(\text{total\_engines}, 1)}$$
 
 The detection ratio $R \in [0, 1]$ is mapped across two non-linear zones:
@@ -38,7 +42,7 @@ The detection ratio $R \in [0, 1]$ is mapped across two non-linear zones:
 1. **Clean**: If $R = 0$, $\text{Base} = 0.0$.
 2. **Low to Moderate Detection** ($0 < R < 0.25$):
    $$\text{Base} = 20.0 + \left(\frac{R}{0.25}\right) \times 70.0$$
-   *Even a single engine flagging an IoC provides a minimum score of 20, scaling up to 90 at a 25% detection ratio.*
+   *Even a single engine flagging an IoC provides a baseline score of 20, scaling up to 90 at a 25% detection ratio.*
 3. **High Consensus** ($R \ge 0.25$):
    $$\text{Base} = 90.0 + \min\left(1.0, \frac{R - 0.25}{0.75}\right) \times 10.0$$
 
@@ -76,68 +80,74 @@ Otherwise, $\text{SubScore} = \text{Base}$.
 
 ---
 
-## 4. Aggregate Scoring and Renormalization
+## 4. Composite Scoring and Strong-Signal Floor
 
-Default configured weights:
+Configured default weights:
 - VirusTotal: $W_{\text{VT}} = 0.50$
 - AlienVault OTX: $W_{\text{OTX}} = 0.25$
 - AbuseIPDB: $W_{\text{Abuse}} = 0.25$
 
-For a set of responsive providers $\mathcal{P}_{\text{ok}} \subseteq \{\text{VT}, \text{OTX}, \text{Abuse}\}$:
+For responsive providers $\mathcal{P}_{\text{ok}} \subseteq \{\text{VT}, \text{OTX}, \text{Abuse}\}$:
 
-1. **Total Active Weight**:
-   $$W_{\text{total}} = \sum_{p \in \mathcal{P}_{\text{ok}}} W_p$$
+1. **Active Weight Renormalization**:
+   $$W_{\text{total}} = \sum_{p \in \mathcal{P}_{\text{ok}}} W_p, \quad w_p = \frac{W_p}{W_{\text{total}}}$$
 
-2. **Normalized Provider Weights**:
-   $$w_p = \frac{W_p}{W_{\text{total}}}$$
+2. **Weighted Average**:
+   $$\text{WeightedAverage} = \sum_{p \in \mathcal{P}_{\text{ok}}} S_p \times w_p$$
 
-3. **Composite Risk Score**:
-   $$\text{RiskScore} = \text{round}\left( \sum_{p \in \mathcal{P}_{\text{ok}}} S_p \times w_p \right)$$
+3. **Strong-Signal Floor**:
+   To prevent passive/clean feeds from dragging down strong, high-detection signals:
+   $$\text{FloorScore} = \text{round}\left(\text{strong\_signal\_factor} \times \max_{p \in \mathcal{P}_{\text{ok}}} S_p\right)$$
+   $$\text{FinalScore} = \max\left(\text{round}(\text{WeightedAverage}), \text{FloorScore}\right)$$
+   *(default `strong_signal_factor = 0.8`)*
 
-4. **Score Confidence**:
+   When $\text{FloorScore} > \text{WeightedAverage}$, the provider with the maximum subscore includes an explicit note in the audit breakdown: `(strong-signal floor applied: <score>)`.
+
+4. **Inconclusive Confidence Guard**:
    $$\text{ScoreConfidence} = \frac{W_{\text{total}}}{W_{\text{applicable}}}$$
-   where $W_{\text{applicable}}$ is the sum of weights of providers supporting this indicator type.
+   If $\text{ScoreConfidence} < \text{min\_confidence\_for\_clean}$ ($0.60$) and the preliminary verdict is `clean` or `low_risk`, the verdict is adjusted to `unknown` with the note `(inconclusive: provider(s) unavailable)` and cached with the short 15-minute TTL (`ttl_unknown = 900`).
 
 ---
 
 ## 5. Worked Examples
 
-### Example 1: Known Malicious IP (All Providers Responsive)
-- **VirusTotal**: 18/74 engines flagged $\rightarrow$ ratio $0.243$, tag bonus applied $\rightarrow$ SubScore = 93.1
-- **OTX**: 8 pulses with `APT28` adversary $\rightarrow$ base $63.4 + 10 = 73.4$
-- **AbuseIPDB**: 85% confidence across 52 reports $\rightarrow$ SubScore = 85.0
-
-$$\text{RiskScore} = 93.1 \times 0.50 + 73.4 \times 0.25 + 85.0 \times 0.25 = 46.55 + 18.35 + 21.25 = 86$$
-- **Verdict**: `malicious` (Risk score 86/100, Confidence 1.0)
-
----
-
-### Example 2: Clean Domain
-- **VirusTotal**: 0/72 engines $\rightarrow$ SubScore = 0.0
+### Example 1: Strong Detection vs Neutral Feeds (Strong-Signal Floor)
+- **VirusTotal**: 45/90 engines $\rightarrow$ ratio $0.50 \ge 0.25 \rightarrow \text{base} = 90.0 + (0.25 / 0.75) \times 10 = 93.3$
 - **OTX**: 0 pulses $\rightarrow$ SubScore = 0.0
-- **AbuseIPDB**: Unsupported for domain type (not queried).
-
-Active weights (VT 0.50, OTX 0.25):
-$$w_{\text{VT}} = \frac{0.50}{0.75} \approx 0.667, \quad w_{\text{OTX}} = \frac{0.25}{0.75} \approx 0.333$$
-$$\text{RiskScore} = 0$$
-- **Verdict**: `clean` (Risk score 0/100, Confidence 1.0)
-
----
-
-### Example 3: Partial Outage (VirusTotal Rate-Limited)
-- **VirusTotal**: Rate limited (`status="rate_limited"`).
-- **OTX**: 4 pulses $\rightarrow$ SubScore = 46.4
-- **AbuseIPDB**: 70% confidence across 10 reports $\rightarrow$ SubScore = 70.0
-
-Active weights: OTX (0.25) and AbuseIPDB (0.25), renormalized to 0.50 each:
-$$\text{RiskScore} = 46.4 \times 0.50 + 70.0 \times 0.50 = 58$$
-- **Verdict**: `suspicious` (Risk score 58/100)
-- **Confidence**: $\frac{0.25 + 0.25}{0.50 + 0.25 + 0.25} = 0.50$ (50% confidence because VT did not respond).
+- **AbuseIPDB**: 0% confidence, 0 reports $\rightarrow$ SubScore = 0.0
+- **Weighted Average**: $93.3 \times 0.50 + 0 \times 0.25 + 0 \times 0.25 = 46.65 \approx 47$ (would dilute to `suspicious`).
+- **Strong-Signal Floor**: $0.8 \times 93.3 = 74.64 \approx 75$.
+- **Final Score**: $\max(47, 75) = 75$.
+- **Verdict**: `malicious` (Risk score 75/100, Confidence 1.0).
 
 ---
 
-## 6. Limitations and Caveats
+### Example 2: Single Engine Scan Flag
+- **VirusTotal**: 1/90 engines $\rightarrow$ ratio $1/90 = 0.0111 < 0.25 \rightarrow \text{base} = 20.0 + (0.0111 / 0.25) \times 70 = 23.1$
+- **VT alone** (e.g. domain or hash not in OTX):
+  - Weighted Average = 23.1.
+  - Floor = $0.8 \times 23.1 = 18.5$.
+  - Final Score = $\max(23, 18) = 23$.
+- **Verdict**: `low_risk` (Risk score 23/100, $10 \le \text{score} \le 34$).
 
-1. **Temporal Lag**: New zero-day campaigns may have 0 detections on VirusTotal and 0 pulses on OTX for hours before signatures are created.
-2. **Shared Hosting / Cloud IPs**: IP addresses associated with CDNs (Cloudflare, Fastly) or cloud providers (AWS, Azure) may receive abuse reports due to transient malicious tenants, while legitimate services share the same IP.
-3. **Heuristic Calibration**: Weights are empirically balanced for common SOC triaging workflows. They can be tuned via `THREATLENS_WEIGHT_*` environment variables.
+---
+
+### Example 3: High Detection with Malware Tag
+- **VirusTotal**: 60/70 engines, tags = `["trojan"]` $\rightarrow$ base $98.1 + 5.0 = 103.1 \rightarrow$ SubScore = 100.0 (clamped).
+- **OTX**: 0 pulses $\rightarrow$ SubScore = 0.0.
+- **Active Weights**: VT ($0.50/0.75 = 0.667$), OTX ($0.25/0.75 = 0.333$).
+- **Weighted Average**: $100.0 \times 0.667 + 0.0 \times 0.333 = 66.67$.
+- **Strong-Signal Floor**: $0.8 \times 100.0 = 80.0$.
+- **Final Score**: $\max(67, 80) = 80$.
+- **Verdict**: `malicious` (Risk score 80/100 $\ge 80$).
+
+---
+
+### Example 4: Completely Clean Indicator
+- **VirusTotal**: 0/70 engines $\rightarrow$ SubScore = 0.0
+- **OTX**: 0 pulses $\rightarrow$ SubScore = 0.0
+- **AbuseIPDB**: 0% confidence, 0 reports $\rightarrow$ SubScore = 0.0
+- **Weighted Average**: 0.0.
+- **Strong-Signal Floor**: $0.8 \times 0.0 = 0.0$.
+- **Final Score**: 0.
+- **Verdict**: `clean` (Risk score 0/100, Confidence 1.0).
