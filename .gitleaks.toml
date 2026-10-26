@@ -1,0 +1,20 @@
+# Gitleaks configuration file for ThreatLens
+# Configures global allowlists for documentation, test mocks, and sample env files
+
+title = "ThreatLens Gitleaks Config"
+
+[allowlist]
+description = "Global allowlist for documentation, test fixtures, and template env variables"
+paths = [
+    '''(?i)docs/.*''',
+    '''(?i)\.env\.example$''',
+    '''(?i)tests/.*''',
+]
+regexes = [
+    '''(?i)THREATLENS_.*_API_KEY=''',
+    '''your_.*_api_key.*''',
+    '''mock_.*''',
+]
+fingerprints = [
+    "2fcd2b03489d5bcff5c2b9bd2f06d3c1df26a6df:docs/adding-a-provider.md:generic-api-key:171"
+]

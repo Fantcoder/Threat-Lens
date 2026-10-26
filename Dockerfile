@@ -35,6 +35,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ==============================================================================
 FROM python:3.11-slim AS runtime
 
+# Security: Remove unused build tools (pip, setuptools, wheel) from base image system site-packages
+# to eliminate vendored vulnerabilities (CVE-2026-23949, CVE-2026-24049). ThreatLens runs
+# entirely within its isolated virtual environment in /app/.venv.
+RUN rm -rf /usr/local/lib/python3.11/site-packages/*
+
 # Security: Create non-root system user and group (UID/GID 10001)
 RUN groupadd -r threatlens -g 10001 && \
     useradd -u 10001 -r -g threatlens -s /sbin/nologin -d /app threatlens

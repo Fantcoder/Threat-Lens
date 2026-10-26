@@ -1,0 +1,2 @@
+# Gitleaks ignore list for false positives
+2fcd2b03489d5bcff5c2b9bd2f06d3c1df26a6df:docs/adding-a-provider.md:generic-api-key:171
