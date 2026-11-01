@@ -6,7 +6,7 @@
 # ==============================================================================
 # Builder Stage
 # ==============================================================================
-FROM python:3.11-slim AS builder
+FROM python:3.15-slim AS builder
 
 # Install uv binary from official image
 COPY --from=ghcr.io/astral-sh/uv:0.10.9 /uv /bin/uv
@@ -33,7 +33,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ==============================================================================
 # Runtime Stage
 # ==============================================================================
-FROM python:3.11-slim AS runtime
+FROM python:3.15-slim AS runtime
 
 # Security: Remove unused build tools (pip, setuptools, wheel) from base image system site-packages
 # to eliminate vendored vulnerabilities (CVE-2026-23949, CVE-2026-24049). ThreatLens runs
